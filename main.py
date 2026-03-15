@@ -175,12 +175,12 @@ def parse_showrun(text: str) -> dict:
     ssh_src = result.get("ssh_source_iface", "")
     for iface in result["interfaces"]:
         if ssh_src and iface["name"] == ssh_src and iface["ip_address"]:
-            result["mgmt_ip"] = iface["ip_address"]
+            result["mgmt_ip"] = iface["ip_address"].split()[0]
             break
     if not result["mgmt_ip"]:
         for iface in result["interfaces"]:
             if iface["ip_address"]:
-                result["mgmt_ip"] = iface["ip_address"]
+                result["mgmt_ip"] = iface["ip_address"].split()[0]
                 break
 
     return result
@@ -406,10 +406,11 @@ def _add_section_header(doc, text: str):
     _write_cell(cell, text, bold=True, color=RGB_WHITE, font_size=8)
 
 
-def _add_interface_table(doc, interfaces: list):
+def _add_interface_table(doc, interfaces: list, logical: bool = False):
     """
-    Compact 7-column interface table.
-    Fits 48 physical ports + logical interfaces on one A4 page.
+    Compact interface table.
+    Physical (logical=False): ПОРТ | ОПИС | РЕЖИМ | ACC/NAT VLAN | TRUNK VLANs | ПРИМІТКА
+    Logical  (logical=True):  ПОРТ | ОПИС | РЕЖИМ | IP-АДРЕСА | ПРИМІТКА
     """
     if not interfaces:
         sp = doc.add_paragraph("(немає інтерфейсів)")
@@ -417,33 +418,36 @@ def _add_interface_table(doc, interfaces: list):
         sp.paragraph_format.space_after  = Pt(4)
         return
 
-    # Column widths must sum to USABLE_MM = 182 mm
-    COL_W_MM = [18, 52, 16, 18, 32, 28, 18]
-    COL_HDR  = [
-        "ПОРТ", "ОПИС / ПРИЗНАЧЕННЯ", "РЕЖИМ",
-        "ACC/NAT VLAN", "TRUNK VLANs", "IP-АДРЕСА", "ПРИМІТКА",
-    ]
-    # Columns that are centre-aligned
-    CENTER = {0, 2, 3, 4, 5, 6}
+    if logical:
+        # 5 cols, sum = 182 mm
+        COL_W_MM = [18, 82, 22, 37, 23]
+        COL_HDR  = ["ПОРТ", "ОПИС / ПРИЗНАЧЕННЯ", "РЕЖИМ", "IP-АДРЕСА", "ПРИМІТКА"]
+        CENTER   = {0, 2, 3, 4}
+    else:
+        # 6 cols, sum = 182 mm
+        COL_W_MM = [18, 45, 22, 32, 42, 23]
+        COL_HDR  = ["ПОРТ", "ОПИС / ПРИЗНАЧЕННЯ", "РЕЖИМ",
+                    "ACC/NAT VLAN", "TRUNK VLANs", "ПРИМІТКА"]
+        CENTER   = {0, 2, 3, 4, 5}
 
-    tbl = doc.add_table(rows=1, cols=7)
+    n_cols = len(COL_W_MM)
+    tbl = doc.add_table(rows=1, cols=n_cols)
     tbl.alignment = WD_TABLE_ALIGNMENT.LEFT
     set_table_fixed_layout(tbl)
     set_table_width(tbl, USABLE_MM)
     set_table_borders(tbl, color_hex=C_BORDER, sz="4")
-    # Compact padding: 15 twips top/bottom ≈ 0.26 mm → row ≈ 4.2 mm at 7pt
     set_cell_margins_table(tbl, top=15, left=60, bottom=15, right=40)
 
     # ── Header row ────────────────────────────────────────────────────────
     hdr = tbl.rows[0]
     set_repeat_header_row(hdr)
-    set_row_min_height(hdr, 280)   # ~4.9 mm
+    set_row_min_height(hdr, 400)
 
     for ci, (h, w) in enumerate(zip(COL_HDR, COL_W_MM)):
         c = hdr.cells[ci]
         c.width = Mm(w)
         set_cell_bg(c, C_ACCENT_BLUE)
-        _write_cell(c, h, bold=True, color=RGB_WHITE, font_size=7,
+        _write_cell(c, h, bold=True, color=RGB_WHITE, font_size=12,
                     align=WD_ALIGN_PARAGRAPH.CENTER if ci in CENTER
                     else WD_ALIGN_PARAGRAPH.LEFT)
 
@@ -460,17 +464,20 @@ def _add_interface_table(doc, interfaces: list):
         else:
             bg = C_ROW_ALT
 
-        acc_nat = iface["access_vlan"] or iface["native_vlan"] or "—"
-        trunk   = iface["trunk_vlans"] or "—"
-        ip      = iface["ip_address"]  or "—"
-        mode    = iface["mode"]        or "—"
-        desc    = iface["description"] or "—"
-        notes   = iface["notes"]       or "—"
+        mode  = iface["mode"]        or "—"
+        desc  = iface["description"] or "—"
+        notes = iface["notes"]       or "—"
+
+        if logical:
+            ip         = iface["ip_address"].split()[0] if iface["ip_address"] else "—"
+            cells_data = [short, desc, mode, ip, notes]
+        else:
+            acc_nat    = iface["access_vlan"] or iface["native_vlan"] or "—"
+            trunk      = iface["trunk_vlans"] or "—"
+            cells_data = [short, desc, mode, acc_nat, trunk, notes]
 
         row = tbl.add_row()
-        set_row_min_height(row, 240)   # ~4.2 mm minimum
-
-        cells_data = [short, desc, mode, acc_nat, trunk, ip, notes]
+        set_row_min_height(row, 360)
 
         for ci, (txt, w) in enumerate(zip(cells_data, COL_W_MM)):
             c = row.cells[ci]
@@ -482,7 +489,7 @@ def _add_interface_table(doc, interfaces: list):
                      else WD_ALIGN_PARAGRAPH.LEFT)
             color = RGB_AMBER if (ci == 2 and iface["shutdown"]) else RGB_DARK_TEXT
             _write_cell(c, txt, bold=(ci == 0), color=color,
-                        font_size=7, align=align)
+                        font_size=12, align=align)
 
     sp = doc.add_paragraph()
     sp.paragraph_format.space_before = Pt(0)
@@ -521,7 +528,7 @@ def build_docx(parsed: dict, user_inputs: dict, output_path: str):
     _add_section_header(doc, "ФІЗИЧНІ ПОРТИ")
     _add_interface_table(doc, physical)
     _add_section_header(doc, "PORT-CHANNEL ТА VLAN")
-    _add_interface_table(doc, logical)
+    _add_interface_table(doc, logical, logical=True)
 
     doc.save(output_path)
 
@@ -530,50 +537,115 @@ def build_docx(parsed: dict, user_inputs: dict, output_path: str):
 #  GUI
 # ═════════════════════════════════════════════════════════════════════════════
 
+# Dark theme palette (matches reference style)
+_G_BG     = "#282828"
+_G_IN     = "#1e1e1e"
+_G_BTN    = "#1a1a1a"
+_G_FG     = "#e0e0e0"
+_G_LBL    = "#b8b8b8"
+_G_ACCENT = "#00ccff"
+_G_ACCH   = "#55ddff"
+_G_BORDER = "#3a3a3a"
+_G_STATUS = "#94a3b8"
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("ShowRunDoc — Cisco DOCX Generator")
         self.resizable(False, False)
-        self.geometry("540x190")
+        self.geometry("560x215")
+        self.configure(bg=_G_BG)
 
-        self._src     = tk.StringVar()
-        self._model   = tk.StringVar()
-        self._serial  = tk.StringVar()
-        self._status  = tk.StringVar(value="Оберіть файл конфігурації та заповніть поля.")
+        self._src    = tk.StringVar()
+        self._model  = tk.StringVar()
+        self._serial = tk.StringVar()
+        self._status = tk.StringVar(
+            value="Оберіть файл конфігурації та заповніть поля.")
 
+        self._setup_styles()
         self._build_ui()
+        self.after(50, self._dark_titlebar)
+
+    def _dark_titlebar(self):
+        """Dark title bar on Windows 10 1903+ / Windows 11."""
+        try:
+            import ctypes
+            self.update_idletasks()
+            hwnd = ctypes.windll.user32.GetParent(int(self.winfo_id()))
+            if not hwnd:
+                hwnd = int(self.winfo_id())
+            val = ctypes.c_int(1)
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                hwnd, 20, ctypes.byref(val), ctypes.sizeof(val))
+        except Exception:
+            pass
+
+    def _setup_styles(self):
+        s = ttk.Style(self)
+        s.theme_use("clam")
+
+        s.configure(".",
+            background=_G_BG, foreground=_G_FG,
+            font=("Arial", 10), borderwidth=0, relief="flat")
+        s.configure("TFrame",  background=_G_BG)
+        s.configure("TLabel",
+            background=_G_BG, foreground=_G_LBL,
+            font=("Arial", 10, "bold"))
+
+        s.configure("TEntry",
+            fieldbackground=_G_IN, foreground=_G_FG,
+            bordercolor=_G_BORDER, lightcolor=_G_BORDER, darkcolor=_G_BORDER,
+            insertcolor=_G_FG, padding=5)
+        s.map("TEntry",
+            bordercolor=[("focus", _G_ACCENT)],
+            lightcolor=[("focus", _G_ACCENT)])
+
+        s.configure("TButton",
+            background=_G_BTN, foreground=_G_ACCENT,
+            bordercolor=_G_ACCENT, lightcolor=_G_ACCENT, darkcolor=_G_BTN,
+            relief="solid", font=("Arial", 10, "bold"),
+            padding=(12, 6), borderwidth=2)
+        s.map("TButton",
+            background=[("active", "#2a2a2a"), ("pressed", "#111111")],
+            foreground=[("active", _G_ACCH)],
+            bordercolor=[("active", _G_ACCH)],
+            lightcolor=[("active", _G_ACCH)])
+
+        s.configure("TSeparator", background=_G_BORDER)
+        s.configure("Status.TLabel",
+            background=_G_BG, foreground=_G_STATUS, font=("Arial", 9))
 
     def _build_ui(self):
-        self.columnconfigure(1, weight=1)
-        PAD = {"padx": 10, "pady": 4}
+        PAD = {"padx": 10, "pady": 5}
+        f = ttk.Frame(self, padding="14 12 14 10")
+        f.pack(fill="both", expand=True)
+        f.columnconfigure(1, weight=1)
 
-        ttk.Label(self, text="Config файл:").grid(
+        ttk.Label(f, text="Config файл:").grid(
             row=0, column=0, sticky="e", **PAD)
-        ttk.Entry(self, textvariable=self._src, width=42).grid(
+        ttk.Entry(f, textvariable=self._src, width=40).grid(
             row=0, column=1, sticky="ew", **PAD)
-        ttk.Button(self, text="Огляд…", command=self._browse).grid(
+        ttk.Button(f, text="Огляд…", command=self._browse).grid(
             row=0, column=2, **PAD)
 
-        ttk.Label(self, text="Модель / Вендор:").grid(
+        ttk.Label(f, text="Модель / Вендор:").grid(
             row=1, column=0, sticky="e", **PAD)
-        ttk.Entry(self, textvariable=self._model, width=42).grid(
+        ttk.Entry(f, textvariable=self._model, width=40).grid(
             row=1, column=1, columnspan=2, sticky="ew", **PAD)
 
-        ttk.Label(self, text="Серійний номер:").grid(
+        ttk.Label(f, text="Серійний номер:").grid(
             row=2, column=0, sticky="e", **PAD)
-        ttk.Entry(self, textvariable=self._serial, width=42).grid(
+        ttk.Entry(f, textvariable=self._serial, width=40).grid(
             row=2, column=1, columnspan=2, sticky="ew", **PAD)
 
-        ttk.Separator(self, orient="horizontal").grid(
-            row=3, column=0, columnspan=3, sticky="ew", pady=6, padx=10)
+        ttk.Separator(f, orient="horizontal").grid(
+            row=3, column=0, columnspan=3, sticky="ew", pady=8)
 
-        ttk.Label(self, textvariable=self._status,
-                  foreground="#475569").grid(
+        ttk.Label(f, textvariable=self._status, style="Status.TLabel").grid(
             row=4, column=0, columnspan=2, sticky="w", padx=10)
-        ttk.Button(self, text="Створити DOCX",
-                   command=self._generate).grid(
-            row=4, column=2, padx=10, pady=4)
+        ttk.Button(f, text="Створити DOCX", command=self._generate).grid(
+            row=4, column=2, padx=10, pady=2)
 
     def _browse(self):
         path = filedialog.askopenfilename(
