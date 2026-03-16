@@ -372,7 +372,7 @@ def _add_info_block(doc, model: str, serial: str, mgmt_ip: str, updated: str):
         lp.paragraph_format.space_before = Pt(0)
         lp.paragraph_format.space_after  = Pt(1)
         lr = lp.add_run(lbl)
-        lr.font.size = Pt(6.5)
+        lr.font.size = Pt(8)
         lr.font.color.rgb = RGB_GREY_LABEL
         _set_run_font(lr)
 
@@ -382,7 +382,7 @@ def _add_info_block(doc, model: str, serial: str, mgmt_ip: str, updated: str):
         vp.paragraph_format.space_after  = Pt(0)
         vr = vp.add_run(val)
         vr.bold = True
-        vr.font.size = Pt(9)
+        vr.font.size = Pt(10)
         vr.font.color.rgb = RGB_DARK_TEXT
         _set_run_font(vr)
 
@@ -403,7 +403,7 @@ def _add_section_header(doc, text: str):
     cell.width = Mm(USABLE_MM)
     set_cell_bg(cell, C_MID_BLUE)
     set_cell_margins(cell, top=60, left=100, bottom=60, right=60)
-    _write_cell(cell, text, bold=True, color=RGB_WHITE, font_size=8)
+    _write_cell(cell, text, bold=True, color=RGB_WHITE, font_size=10)
 
 
 def _add_interface_table(doc, interfaces: list, logical: bool = False):
@@ -447,7 +447,7 @@ def _add_interface_table(doc, interfaces: list, logical: bool = False):
         c = hdr.cells[ci]
         c.width = Mm(w)
         set_cell_bg(c, C_ACCENT_BLUE)
-        _write_cell(c, h, bold=True, color=RGB_WHITE, font_size=12,
+        _write_cell(c, h, bold=True, color=RGB_WHITE, font_size=10,
                     align=WD_ALIGN_PARAGRAPH.CENTER if ci in CENTER
                     else WD_ALIGN_PARAGRAPH.LEFT)
 
@@ -489,7 +489,7 @@ def _add_interface_table(doc, interfaces: list, logical: bool = False):
                      else WD_ALIGN_PARAGRAPH.LEFT)
             color = RGB_AMBER if (ci == 2 and iface["shutdown"]) else RGB_DARK_TEXT
             _write_cell(c, txt, bold=(ci == 0), color=color,
-                        font_size=12, align=align)
+                        font_size=10, align=align)
 
     sp = doc.add_paragraph()
     sp.paragraph_format.space_before = Pt(0)
