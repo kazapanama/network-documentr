@@ -31,6 +31,7 @@ from main import (
     _add_info_block,
     _add_section_header,
     _add_interface_table,
+    _add_vlan_table,
     build_docx,
     parse_showrun,
     classify_interfaces,
@@ -40,6 +41,8 @@ from main import (
     C_MID_BLUE,
     C_LIGHT_BLUE,
     C_ACCENT_BLUE,
+    C_WHITE,
+    C_ROW_ALT,
     RGB_WHITE,
     RGB_DARK_TEXT,
     RGB_AMBER,
@@ -70,16 +73,22 @@ def _doc():
 def _iface(name: str, **kwargs) -> dict:
     """Minimal valid interface dict."""
     defaults = {
-        "name":        name,
-        "description": "",
-        "mode":        "access",
-        "access_vlan": "10",
-        "native_vlan": "",
-        "trunk_vlans": "",
-        "ip_address":  "",
-        "shutdown":    False,
-        "notes":       "",
-        "iface_class": "physical",
+        "name":            name,
+        "description":     "",
+        "mode":            "access",
+        "access_vlan":     "10",
+        "native_vlan":     "",
+        "trunk_vlans":     "",
+        "ip_address":      "",
+        "shutdown":        False,
+        "notes":           "",
+        "iface_class":     "physical",
+        "voice_vlan":        "",
+        "stp_portfast":      False,
+        "stp_rootguard":     False,
+        "stp_bpduguard":     False,
+        "port_security":     False,
+        "port_security_max": "",
     }
     defaults.update(kwargs)
     return defaults
@@ -790,3 +799,158 @@ def _all_cell_texts(table) -> list[str]:
             for para in cell.paragraphs:
                 texts.append(para.text)
     return texts
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  _add_vlan_table
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _vlans(*pairs):
+    """Helper: create list of vlan dicts from (id, name) pairs."""
+    return [{"id": vid, "name": name} for vid, name in pairs]
+
+
+class TestAddVlanTable:
+
+    def test_empty_vlans_no_table(self):
+        doc = _doc()
+        _add_vlan_table(doc, [])
+        assert len(doc.tables) == 0
+
+    def test_empty_vlans_returns_silently(self):
+        doc = _doc()
+        _add_vlan_table(doc, [])  # should not raise
+
+    def test_adds_one_table(self):
+        doc = _doc()
+        _add_vlan_table(doc, _vlans(("10", "SERVERS")))
+        assert len(doc.tables) == 1
+
+    def test_table_has_2_columns(self):
+        doc = _doc()
+        _add_vlan_table(doc, _vlans(("10", "SERVERS")))
+        assert len(doc.tables[0].columns) == 2
+
+    def test_header_first_column_vlan(self):
+        doc = _doc()
+        _add_vlan_table(doc, _vlans(("10", "SERVERS")))
+        hdr_texts = [c.paragraphs[0].text for c in doc.tables[0].rows[0].cells]
+        assert hdr_texts[0] == "VLAN"
+
+    def test_header_second_column_name(self):
+        doc = _doc()
+        _add_vlan_table(doc, _vlans(("10", "SERVERS")))
+        hdr_texts = [c.paragraphs[0].text for c in doc.tables[0].rows[0].cells]
+        assert hdr_texts[1] == "НАЗВА"
+
+    def test_header_accent_blue_background(self):
+        doc = _doc()
+        _add_vlan_table(doc, _vlans(("10", "SERVERS")))
+        cell = doc.tables[0].rows[0].cells[0]
+        shd = cell._tc.tcPr.find(qn("w:shd"))
+        assert shd.get(qn("w:fill")) == C_ACCENT_BLUE
+
+    def test_data_row_count(self):
+        doc = _doc()
+        _add_vlan_table(doc, _vlans(("10", "A"), ("20", "B"), ("30", "C")))
+        # 1 header + 3 data rows
+        assert len(doc.tables[0].rows) == 4
+
+    def test_vlan_id_in_first_data_cell(self):
+        doc = _doc()
+        _add_vlan_table(doc, _vlans(("99", "MGMT")))
+        text = doc.tables[0].rows[1].cells[0].paragraphs[0].text
+        assert "99" in text
+
+    def test_vlan_name_in_second_data_cell(self):
+        doc = _doc()
+        _add_vlan_table(doc, _vlans(("99", "MGMT")))
+        text = doc.tables[0].rows[1].cells[1].paragraphs[0].text
+        assert "MGMT" in text
+
+    def test_id_cell_is_bold(self):
+        doc = _doc()
+        _add_vlan_table(doc, _vlans(("10", "SERVERS")))
+        run = doc.tables[0].rows[1].cells[0].paragraphs[0].runs[0]
+        assert run.bold is True
+
+    def test_alternating_row_backgrounds(self):
+        doc = _doc()
+        _add_vlan_table(doc, _vlans(("10", "A"), ("20", "B")))
+        tbl = doc.tables[0]
+        bg0 = tbl.rows[1].cells[0]._tc.tcPr.find(qn("w:shd")).get(qn("w:fill"))
+        bg1 = tbl.rows[2].cells[0]._tc.tcPr.find(qn("w:shd")).get(qn("w:fill"))
+        assert bg0 in (C_WHITE, C_ROW_ALT)
+        assert bg1 in (C_WHITE, C_ROW_ALT)
+        assert bg0 != bg1
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  build_docx — VLAN DEFINITIONS section
+# ─────────────────────────────────────────────────────────────────────────────
+
+VLAN_CONFIG = """\
+hostname VLAN-SW
+vlan 10
+ name SERVERS
+vlan 20
+ name CLIENTS
+interface GigabitEthernet1/0/1
+ switchport mode access
+ switchport access vlan 10
+"""
+
+
+class TestBuildDocxVlanSection:
+
+    def test_vlan_section_header_present(self, tmp_path):
+        out = str(tmp_path / "vlan.docx")
+        build_docx(parse_showrun(VLAN_CONFIG), {}, out)
+        doc = Document(out)
+        all_texts = _all_cell_texts(doc.tables[2])  # 3rd table is section header
+        # Search all tables for VLAN DEFINITIONS text
+        found = any(
+            "VLAN DEFINITIONS" in t
+            for tbl in doc.tables
+            for t in _all_cell_texts(tbl)
+        )
+        assert found
+
+    def test_vlan_names_in_document(self, tmp_path):
+        out = str(tmp_path / "vlan.docx")
+        build_docx(parse_showrun(VLAN_CONFIG), {}, out)
+        doc = Document(out)
+        all_texts = [
+            t
+            for tbl in doc.tables
+            for t in _all_cell_texts(tbl)
+        ]
+        assert any("SERVERS" in t for t in all_texts)
+        assert any("CLIENTS" in t for t in all_texts)
+
+    def test_no_vlan_section_when_no_vlans(self, tmp_path):
+        out = str(tmp_path / "novlan.docx")
+        cfg = "hostname SW\ninterface GigabitEthernet1/0/1\n switchport mode access\n"
+        build_docx(parse_showrun(cfg), {}, out)
+        doc = Document(out)
+        found = any(
+            "VLAN DEFINITIONS" in t
+            for tbl in doc.tables
+            for t in _all_cell_texts(tbl)
+        )
+        assert not found
+
+    def test_vlan_table_has_correct_row_count(self, tmp_path):
+        out = str(tmp_path / "vlan2.docx")
+        build_docx(parse_showrun(VLAN_CONFIG), {}, out)
+        doc = Document(out)
+        # Find the VLAN definitions table (the one with "VLAN" header)
+        vlan_tbl = None
+        for tbl in doc.tables:
+            texts = _all_cell_texts(tbl)
+            if any(t == "VLAN" for t in texts) and any(t == "НАЗВА" for t in texts):
+                vlan_tbl = tbl
+                break
+        assert vlan_tbl is not None
+        # 1 header + 2 data rows
+        assert len(vlan_tbl.rows) == 3

@@ -153,6 +153,8 @@ class TestParseShowrunInterfaces:
             "name", "description", "mode", "access_vlan",
             "native_vlan", "trunk_vlans", "ip_address",
             "shutdown", "notes", "iface_class",
+            "voice_vlan", "stp_portfast", "stp_rootguard",
+            "stp_bpduguard", "port_security", "port_security_max",
         ):
             assert field in iface, f"Missing key: {field}"
 
@@ -717,3 +719,313 @@ class TestFormatLoadStatus:
     def test_returns_string(self):
         parsed = {"hostname": "SW", "mgmt_ip": "", "interfaces": []}
         assert isinstance(format_load_status(parsed), str)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Voice VLAN
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestParseShowrunVoiceVlan:
+
+    def test_voice_vlan_parsed(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             switchport voice vlan 10
+        """)
+        assert r["interfaces"][0]["voice_vlan"] == "10"
+
+    def test_voice_vlan_default_empty(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+        """)
+        assert r["interfaces"][0]["voice_vlan"] == ""
+
+    def test_voice_vlan_in_notes(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             switchport voice vlan 20
+        """)
+        assert "Voice:20" in r["interfaces"][0]["notes"]
+
+    def test_voice_vlan_notes_before_shutdown(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             switchport voice vlan 5
+             shutdown
+        """)
+        notes = r["interfaces"][0]["notes"]
+        assert notes.index("Voice:5") < notes.index("shutdown")
+
+    def test_voice_vlan_various_numbers(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             switchport voice vlan 999
+        """)
+        assert r["interfaces"][0]["voice_vlan"] == "999"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Spanning-tree (PortFast / RootGuard / BPDUGuard)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestParseShowrunSpanningTree:
+
+    def test_portfast_set(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             spanning-tree portfast
+        """)
+        assert r["interfaces"][0]["stp_portfast"] is True
+
+    def test_portfast_trunk_also_sets_flag(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             spanning-tree portfast trunk
+        """)
+        assert r["interfaces"][0]["stp_portfast"] is True
+
+    def test_portfast_default_false(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+        """)
+        assert r["interfaces"][0]["stp_portfast"] is False
+
+    def test_rootguard_set(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             spanning-tree guard root
+        """)
+        assert r["interfaces"][0]["stp_rootguard"] is True
+
+    def test_rootguard_default_false(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+        """)
+        assert r["interfaces"][0]["stp_rootguard"] is False
+
+    def test_bpduguard_set(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             spanning-tree bpduguard enable
+        """)
+        assert r["interfaces"][0]["stp_bpduguard"] is True
+
+    def test_bpduguard_default_false(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+        """)
+        assert r["interfaces"][0]["stp_bpduguard"] is False
+
+    def test_portfast_in_notes(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             spanning-tree portfast
+        """)
+        assert "PortFast" in r["interfaces"][0]["notes"]
+
+    def test_rootguard_in_notes(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             spanning-tree guard root
+        """)
+        assert "RootGuard" in r["interfaces"][0]["notes"]
+
+    def test_bpduguard_in_notes(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             spanning-tree bpduguard enable
+        """)
+        assert "BPDUGuard" in r["interfaces"][0]["notes"]
+
+    def test_portfast_before_rootguard_in_notes(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             spanning-tree portfast
+             spanning-tree guard root
+        """)
+        notes = r["interfaces"][0]["notes"]
+        assert notes.index("PortFast") < notes.index("RootGuard")
+
+    def test_rootguard_before_bpduguard_in_notes(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             spanning-tree guard root
+             spanning-tree bpduguard enable
+        """)
+        notes = r["interfaces"][0]["notes"]
+        assert notes.index("RootGuard") < notes.index("BPDUGuard")
+
+    def test_stp_notes_before_shutdown(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             spanning-tree portfast
+             shutdown
+        """)
+        notes = r["interfaces"][0]["notes"]
+        assert notes.index("PortFast") < notes.index("shutdown")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Port security
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestParseShowrunPortSecurity:
+
+    def test_port_security_bare(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             switchport port-security
+        """)
+        assert r["interfaces"][0]["port_security"] is True
+
+    def test_port_security_default_false(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+        """)
+        assert r["interfaces"][0]["port_security"] is False
+
+    def test_port_security_maximum_sets_both(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             switchport port-security maximum 3
+        """)
+        iface = r["interfaces"][0]
+        assert iface["port_security"] is True
+        assert iface["port_security_max"] == "3"
+
+    def test_port_security_max_default_empty(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+        """)
+        assert r["interfaces"][0]["port_security_max"] == ""
+
+    def test_port_security_bare_notes_portsec(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             switchport port-security
+        """)
+        assert "PortSec" in r["interfaces"][0]["notes"]
+
+    def test_port_security_max_notes_secmax(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             switchport port-security maximum 5
+        """)
+        assert "SecMax:5" in r["interfaces"][0]["notes"]
+
+    def test_secmax_not_portsec_when_max_present(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             switchport port-security maximum 2
+        """)
+        notes = r["interfaces"][0]["notes"]
+        assert "SecMax:2" in notes
+        assert "PortSec" not in notes
+
+    def test_port_security_notes_before_shutdown(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             switchport port-security
+             shutdown
+        """)
+        notes = r["interfaces"][0]["notes"]
+        assert notes.index("PortSec") < notes.index("shutdown")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  VLAN definitions
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestParseShowrunVlanDefinitions:
+
+    def test_vlans_key_present(self):
+        r = _p("hostname SW\n")
+        assert "vlans" in r
+
+    def test_empty_when_no_vlan_blocks(self):
+        r = _p("""
+            hostname SW
+            interface GigabitEthernet1/0/1
+        """)
+        assert r["vlans"] == []
+
+    def test_single_vlan_with_name(self):
+        r = _p("""
+            vlan 10
+             name SERVERS
+        """)
+        assert len(r["vlans"]) == 1
+        assert r["vlans"][0] == {"id": "10", "name": "SERVERS"}
+
+    def test_multiple_vlans(self):
+        r = _p("""
+            vlan 10
+             name SERVERS
+            vlan 20
+             name CLIENTS
+        """)
+        ids = [v["id"] for v in r["vlans"]]
+        assert "10" in ids
+        assert "20" in ids
+
+    def test_vlan_without_name_skipped(self):
+        r = _p("""
+            vlan 10
+            vlan 20
+             name MGMT
+        """)
+        assert len(r["vlans"]) == 1
+        assert r["vlans"][0]["id"] == "20"
+
+    def test_vlan_range_skipped(self):
+        r = _p("""
+            vlan 10,20,30
+             name RANGE
+        """)
+        assert r["vlans"] == []
+
+    def test_vlan_hyphen_range_skipped(self):
+        r = _p("""
+            vlan 10-20
+             name RANGE
+        """)
+        assert r["vlans"] == []
+
+    def test_vlan_database_skipped(self):
+        # "vlan database" does not match "^vlan \d+$"
+        r = _p("""
+            vlan database
+             vlan 10 name OLD
+        """)
+        assert r["vlans"] == []
+
+    def test_vlan_name_whitespace_stripped(self):
+        r = _p("""
+            vlan 99
+             name   MGMT-VLAN
+        """)
+        assert r["vlans"][0]["name"] == "MGMT-VLAN"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Integration: full notes ordering
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestParseShowrunIntegrationNotes:
+
+    def test_full_notes_ordering(self):
+        """All note tokens appear in the correct order."""
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             channel-group 2 mode active
+             switchport voice vlan 10
+             spanning-tree portfast
+             spanning-tree guard root
+             spanning-tree bpduguard enable
+             switchport port-security maximum 3
+             shutdown
+        """)
+        notes = r["interfaces"][0]["notes"]
+        order = ["Po2 member", "Voice:10", "PortFast", "RootGuard", "BPDUGuard", "SecMax:3", "shutdown"]
+        positions = [notes.index(tok) for tok in order]
+        assert positions == sorted(positions), f"Wrong order in: {notes}"

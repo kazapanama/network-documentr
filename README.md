@@ -15,6 +15,10 @@
 - Позначає `shutdown`-порти окремим кольором
 - Автоматично визначає членів Port-channel (`channel-group`)
 - Підтримує кодування UTF-8 / CP1251 / Latin-1
+- Розпізнає Voice VLAN, STP PortFast / RootGuard / BPDUGuard, Port Security — виводить у ПРИМІТКУ
+- Генерує таблицю **VLAN DEFINITIONS** з назвами VLAN (`vlan N` + `name`)
+- **Drag & drop** конфігураційного файлу на кнопку "Завантажити" (потребує `tkinterdnd2`)
+- **Batch mode** — вибір кількох файлів одночасно, генерація всіх документів у обрану директорію
 
 ---
 
@@ -33,6 +37,10 @@
 │  PORT-CHANNEL ТА VLAN                               │
 ├──────┬───────────────┬───────┬──────────────┬───────┤
 │ ПОРТ │ ОПИС          │ РЕЖИМ │ IP-АДРЕСА    │ ПРИМ. │
+├─────────────────────────────────────────────────────┤
+│  VLAN DEFINITIONS  (якщо є vlan + name у конфізі)  │
+├──────┬─────────────────────────────────────────────┤
+│ VLAN │ НАЗВА                                       │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -45,6 +53,7 @@
 - `lxml`
 - `tkinter` (вбудований у CPython)
 - `pyinstaller` — тільки для збірки .exe
+- `tkinterdnd2` — опціонально, для drag & drop
 
 ---
 
@@ -72,10 +81,12 @@ python main.py
 
 ## Використання
 
-1. Натисніть **Огляд…** і оберіть `.txt`-файл з виводом `show running-config`
+1. Натисніть **Завантажити** і оберіть один або кілька `.txt`-файлів з виводом `show running-config`
+   — або перетягніть файл(и) прямо на кнопку (потребує `tkinterdnd2`)
 2. Заповніть поля **Модель / Вендор** і **Серійний номер** (необов'язково)
 3. Натисніть **Створити DOCX**
-4. Вкажіть куди зберегти — документ готовий
+   - Один файл → вибір імені та шляху збереження
+   - Кілька файлів → вибір директорії, документи зберігаються як `<hostname>_doc.docx`
 
 MGMT IP підхоплюється автоматично (з `ip ssh source-interface` або першого `ip address`).
 
@@ -88,7 +99,7 @@ pip install pytest
 python -m pytest tests/ -v
 ```
 
-186 тестів покривають парсер (`test_parser.py`) та DOCX-білдер (`test_docx_builder.py`).
+252 тести покривають парсер (`test_parser.py`) та DOCX-білдер (`test_docx_builder.py`).
 
 ---
 
@@ -101,10 +112,11 @@ build.bat
 Використовує PyInstaller з прапорами:
 
 ```
---onefile --windowed --name network-documentr --collect-all=docx
+--onefile --windowed --name network-documentr --collect-all=docx --collect-all=tkinterdnd2
 ```
 
 > `--collect-all=docx` є критичним: без нього .exe не знаходить `docx/templates/default.docx` і падає при запуску.
+> `--collect-all=tkinterdnd2` потрібен для drag & drop; якщо пакет не встановлено — функція просто не активується.
 
 Результат: `dist\network-documentr.exe`
 
@@ -148,6 +160,8 @@ network-documentr/
 ## Примітки
 
 - **Кирилиця**: функція `_set_run_font()` встановлює `w:cs="Calibri"` — без цього кирилиця у Word рендериться іншим шрифтом.
-- **Shutdown**: колонка РЕЖИМ виділяється окремим кольором.
+- **Shutdown**: колонка РЕЖИМ виділяється окремим кольором (amber).
 - **Port-channel members**: рядки з `channel-group N` отримують примітку `PoN member` автоматично.
+- **ПРИМІТКА** формується в порядку: `PoN member` → `Voice:N` → `PortFast` → `RootGuard` → `BPDUGuard` → `SecMax:N` / `PortSec` → `shutdown`.
+- **VLAN DEFINITIONS**: секція додається лише якщо конфіг містить блоки `vlan N` + `name`.
 - **Кодування**: файл читається послідовно через UTF-8 → CP1251 → Latin-1.

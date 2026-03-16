@@ -99,16 +99,22 @@ def parse_showrun(text: str) -> dict:
         iface_name = lines[0].split(None, 1)[1].strip()
 
         iface = {
-            "name":        iface_name,
-            "description": "",
-            "mode":        "",
-            "access_vlan": "",
-            "native_vlan": "",
-            "trunk_vlans": "",
-            "ip_address":  "",
-            "shutdown":    False,
-            "notes":       "",
-            "iface_class": "physical",
+            "name":            iface_name,
+            "description":     "",
+            "mode":            "",
+            "access_vlan":     "",
+            "native_vlan":     "",
+            "trunk_vlans":     "",
+            "ip_address":      "",
+            "shutdown":        False,
+            "notes":           "",
+            "iface_class":     "physical",
+            "voice_vlan":        "",
+            "stp_portfast":      False,
+            "stp_rootguard":     False,
+            "stp_bpduguard":     False,
+            "port_security":     False,
+            "port_security_max": "",
         }
 
         for line in lines[1:]:
@@ -149,9 +155,35 @@ def parse_showrun(text: str) -> dict:
                 po_num = re.search(r"channel-group (\d+)", line).group(1)
                 iface["notes"] = f"Po{po_num} member"
 
-        # Append shutdown to notes if needed
-        if iface["shutdown"]:
-            iface["notes"] = (iface["notes"] + " shutdown").strip()
+            elif re.match(r"switchport voice vlan (\d+)", line):
+                iface["voice_vlan"] = re.search(r"switchport voice vlan (\d+)", line).group(1)
+
+            elif re.match(r"spanning-tree portfast", line):
+                iface["stp_portfast"] = True
+
+            elif line == "spanning-tree guard root":
+                iface["stp_rootguard"] = True
+
+            elif line == "spanning-tree bpduguard enable":
+                iface["stp_bpduguard"] = True
+
+            elif re.match(r"switchport port-security maximum (\d+)", line):
+                iface["port_security_max"] = re.search(r"switchport port-security maximum (\d+)", line).group(1)
+                iface["port_security"] = True
+
+            elif line == "switchport port-security":
+                iface["port_security"] = True
+
+        # Build notes: Po member → Voice:X → PortFast → RootGuard → BPDUGuard → SecMax/PortSec → shutdown
+        notes_parts = [iface["notes"]] if iface["notes"] else []
+        if iface["voice_vlan"]:        notes_parts.append(f"Voice:{iface['voice_vlan']}")
+        if iface["stp_portfast"]:      notes_parts.append("PortFast")
+        if iface["stp_rootguard"]:     notes_parts.append("RootGuard")
+        if iface["stp_bpduguard"]:     notes_parts.append("BPDUGuard")
+        if iface["port_security_max"]: notes_parts.append(f"SecMax:{iface['port_security_max']}")
+        elif iface["port_security"]:   notes_parts.append("PortSec")
+        if iface["shutdown"]:          notes_parts.append("shutdown")
+        iface["notes"] = " ".join(notes_parts)
 
         # Mode fallback
         if not iface["mode"]:
@@ -170,6 +202,24 @@ def parse_showrun(text: str) -> dict:
             iface["iface_class"] = "physical"
 
         result["interfaces"].append(iface)
+
+    # Parse VLAN definitions (single-VID blocks only; skip ranges, "vlan database")
+    result["vlans"] = []
+    vlan_blocks = re.split(r"(?=^vlan\s)", text, flags=re.MULTILINE)
+    for vblock in vlan_blocks:
+        lines_v = vblock.strip().splitlines()
+        if not lines_v:
+            continue
+        m_vid = re.match(r"^vlan\s+(\d+)$", lines_v[0].strip())
+        if not m_vid:
+            continue
+        vlan_name = ""
+        for vl in lines_v[1:]:
+            if vl.strip().startswith("name "):
+                vlan_name = vl.strip()[len("name "):].strip()
+                break
+        if vlan_name:
+            result["vlans"].append({"id": m_vid.group(1), "name": vlan_name})
 
     # Resolve MGMT IP: prefer SSH source-interface, fallback to first IP found
     ssh_src = result.get("ssh_source_iface", "")
@@ -512,6 +562,57 @@ def _add_interface_table(doc, interfaces: list, logical: bool = False):
     sp.paragraph_format.space_after  = Pt(4)
 
 
+def _add_vlan_table(doc, vlans: list):
+    """Two-column VLAN definitions table: VLAN ID | НАЗВА."""
+    if not vlans:
+        return
+
+    COL_W_MM = [22, 160]
+    COL_HDR  = ["VLAN", "НАЗВА"]
+
+    tbl = doc.add_table(rows=1, cols=2)
+    tbl.alignment = WD_TABLE_ALIGNMENT.LEFT
+    set_table_fixed_layout(tbl)
+    set_table_width(tbl, USABLE_MM)
+    set_table_borders(tbl, color_hex=C_BORDER, sz="4")
+    set_cell_margins_table(tbl, top=15, left=60, bottom=15, right=40)
+
+    hdr = tbl.rows[0]
+    set_repeat_header_row(hdr)
+    set_row_min_height(hdr, 400)
+
+    for ci, (h, w) in enumerate(zip(COL_HDR, COL_W_MM)):
+        c = hdr.cells[ci]
+        c.width = Mm(w)
+        set_cell_bg(c, C_ACCENT_BLUE)
+        _write_cell(c, h, bold=True, color=RGB_WHITE, font_size=10,
+                    align=WD_ALIGN_PARAGRAPH.CENTER if ci == 0
+                    else WD_ALIGN_PARAGRAPH.LEFT)
+
+    for ri, vlan in enumerate(vlans):
+        bg = C_WHITE if ri % 2 == 0 else C_ROW_ALT
+        row = tbl.add_row()
+        set_row_min_height(row, 360)
+
+        c0 = row.cells[0]
+        c0.width = Mm(COL_W_MM[0])
+        c0.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+        set_cell_bg(c0, bg)
+        _write_cell(c0, str(vlan["id"]), bold=True, color=RGB_DARK_TEXT,
+                    font_size=10, align=WD_ALIGN_PARAGRAPH.CENTER)
+
+        c1 = row.cells[1]
+        c1.width = Mm(COL_W_MM[1])
+        c1.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+        set_cell_bg(c1, bg)
+        _write_cell(c1, vlan["name"], color=RGB_DARK_TEXT,
+                    font_size=10, align=WD_ALIGN_PARAGRAPH.LEFT)
+
+    sp = doc.add_paragraph()
+    sp.paragraph_format.space_before = Pt(0)
+    sp.paragraph_format.space_after  = Pt(4)
+
+
 def build_docx(parsed: dict, user_inputs: dict, output_path: str):
     doc = Document()
 
@@ -546,12 +647,26 @@ def build_docx(parsed: dict, user_inputs: dict, output_path: str):
     _add_section_header(doc, "PORT-CHANNEL ТА VLAN")
     _add_interface_table(doc, logical, logical=True)
 
+    vlans = parsed.get("vlans", [])
+    if vlans:
+        _add_section_header(doc, "VLAN DEFINITIONS")
+        _add_vlan_table(doc, vlans)
+
     doc.save(output_path)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  GUI
 # ═════════════════════════════════════════════════════════════════════════════
+
+try:
+    from tkinterdnd2 import DND_FILES, TkinterDnD
+    _BASE = TkinterDnD.Tk
+    _HAS_DND = True
+except ImportError:
+    _BASE = tk.Tk
+    _HAS_DND = False
+    DND_FILES = None
 
 # Dark theme palette (matches reference style)
 _G_BG      = "#282828"
@@ -568,7 +683,7 @@ _G_GREENH  = "#4ade80"
 _G_GREENBG = "#0f2a1a"
 
 
-class App(tk.Tk):
+class App(_BASE):
     def __init__(self):
         super().__init__()
         self.title("ShowRunDoc — Cisco DOCX Generator")
@@ -576,7 +691,7 @@ class App(tk.Tk):
         self.geometry("560x215")
         self.configure(bg=_G_BG)
 
-        self._src    = tk.StringVar()
+        self._paths: list = []
         self._model  = tk.StringVar()
         self._serial = tk.StringVar()
         self._status = tk.StringVar(
@@ -654,6 +769,9 @@ class App(tk.Tk):
 
         self._btn_load = ttk.Button(f, text="Завантажити", command=self._browse)
         self._btn_load.grid(row=0, column=0, columnspan=3, sticky="ew", **PAD)
+        if _HAS_DND:
+            self._btn_load.drop_target_register(DND_FILES)
+            self._btn_load.dnd_bind("<<Drop>>", self._on_drop)
 
         ttk.Label(f, text="Модель / Вендор:").grid(
             row=1, column=0, sticky="e", **PAD)
@@ -674,68 +792,115 @@ class App(tk.Tk):
             row=4, column=2, padx=10, pady=2)
 
     def _browse(self):
-        path = filedialog.askopenfilename(
-            title="Оберіть файл show running-config",
+        paths = filedialog.askopenfilenames(
+            title="Оберіть файл(и) show running-config",
             filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
         )
-        if not path:
+        if not paths:
             return
-        self._src.set(path)
+        self._load_files(list(paths))
+
+    def _load_files(self, paths: list):
         try:
-            parsed = parse_showrun(read_file_safe(path))
-            self._btn_load.configure(text="Завантажено", style="Loaded.TButton")
-            self._status.set(format_load_status(parsed))
+            parsed_list = [parse_showrun(read_file_safe(p)) for p in paths]
         except Exception:
+            self._paths = []
             self._btn_load.configure(text="Завантажити", style="TButton")
             self._status.set("Помилка читання файлу.")
+            return
+
+        self._paths = list(paths)
+        n = len(paths)
+        if n == 1:
+            self._btn_load.configure(text="Завантажено", style="Loaded.TButton")
+            self._status.set(format_load_status(parsed_list[0]))
+        else:
+            self._btn_load.configure(text=f"Завантажено ({n})", style="Loaded.TButton")
+            self._status.set(f"{n} конфігів готові до генерації")
+
+    def _on_drop(self, event):
+        tokens = re.findall(r'\{[^}]+\}|\S+', event.data)
+        paths = [t.strip('{}') for t in tokens if os.path.isfile(t.strip('{}'))]
+        if paths:
+            self._load_files(paths)
 
     def _generate(self):
-        src = self._src.get().strip()
-        if not src or not os.path.isfile(src):
+        if not self._paths:
             messagebox.showerror("Помилка",
-                                 "Оберіть коректний файл show running-config.")
+                                 "Оберіть файл(и) show running-config.")
             return
 
-        try:
-            raw    = read_file_safe(src)
-            parsed = parse_showrun(raw)
-        except Exception as exc:
-            messagebox.showerror("Помилка читання файлу", str(exc))
-            return
+        user_inputs = {
+            "model":  self._model.get().strip(),
+            "serial": self._serial.get().strip(),
+        }
 
-        hostname = parsed.get("hostname") or Path(src).stem
-        save_path = filedialog.asksaveasfilename(
-            title="Зберегти DOCX як…",
-            initialdir=str(Path(src).parent),
-            initialfile=f"{hostname}_doc.docx",
-            defaultextension=".docx",
-            filetypes=[("Word document", "*.docx")],
-        )
-        if not save_path:
-            return
+        if len(self._paths) == 1:
+            src = self._paths[0]
+            try:
+                raw    = read_file_safe(src)
+                parsed = parse_showrun(raw)
+            except Exception as exc:
+                messagebox.showerror("Помилка читання файлу", str(exc))
+                return
 
-        try:
-            self._status.set("Генерую документ…")
-            self.update()
-
-            user_inputs = {
-                "model":  self._model.get().strip(),
-                "serial": self._serial.get().strip(),
-            }
-            build_docx(parsed, user_inputs, save_path)
-
-            physical, logical = classify_interfaces(parsed["interfaces"])
-            self._status.set(f"Готово: {Path(save_path).name}")
-            messagebox.showinfo(
-                "Готово",
-                f"Документ збережено:\n{save_path}\n\n"
-                f"Hostname       : {hostname}\n"
-                f"Фізичні порти  : {len(physical)}\n"
-                f"Po / VLAN      : {len(logical)}",
+            hostname = parsed.get("hostname") or Path(src).stem
+            save_path = filedialog.asksaveasfilename(
+                title="Зберегти DOCX як…",
+                initialdir=str(Path(src).parent),
+                initialfile=f"{hostname}_doc.docx",
+                defaultextension=".docx",
+                filetypes=[("Word document", "*.docx")],
             )
-        except Exception as exc:
-            messagebox.showerror("Помилка генерації", str(exc))
-            self._status.set("Помилка. Перевірте файл конфігурації.")
+            if not save_path:
+                return
+
+            try:
+                self._status.set("Генерую документ…")
+                self.update()
+                build_docx(parsed, user_inputs, save_path)
+                physical, logical = classify_interfaces(parsed["interfaces"])
+                self._status.set(f"Готово: {Path(save_path).name}")
+                messagebox.showinfo(
+                    "Готово",
+                    f"Документ збережено:\n{save_path}\n\n"
+                    f"Hostname       : {hostname}\n"
+                    f"Фізичні порти  : {len(physical)}\n"
+                    f"Po / VLAN      : {len(logical)}",
+                )
+            except Exception as exc:
+                messagebox.showerror("Помилка генерації", str(exc))
+                self._status.set("Помилка. Перевірте файл конфігурації.")
+
+        else:
+            out_dir = filedialog.askdirectory(
+                title="Оберіть директорію для збереження документів")
+            if not out_dir:
+                return
+
+            self._status.set("Генерую документи…")
+            self.update()
+            saved = []
+            errors = []
+            for path in self._paths:
+                try:
+                    raw    = read_file_safe(path)
+                    parsed = parse_showrun(raw)
+                    hostname = parsed.get("hostname") or Path(path).stem
+                    out_path = os.path.join(out_dir, f"{hostname}_doc.docx")
+                    build_docx(parsed, user_inputs, out_path)
+                    saved.append(Path(out_path).name)
+                except Exception as exc:
+                    errors.append(f"{Path(path).name}: {exc}")
+
+            if errors:
+                messagebox.showerror("Помилки генерації", "\n".join(errors))
+            if saved:
+                self._status.set(f"Готово: {len(saved)} файлів")
+                messagebox.showinfo(
+                    "Готово",
+                    f"Збережено {len(saved)} документів:\n" + "\n".join(saved),
+                )
 
 
 if __name__ == "__main__":
