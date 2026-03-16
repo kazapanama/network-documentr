@@ -1,6 +1,7 @@
 """
 Unit tests for parser functions:
   read_file_safe / short_iface / parse_showrun / classify_interfaces
+  format_load_status
 """
 import textwrap
 import pytest
@@ -10,6 +11,7 @@ from main import (
     short_iface,
     parse_showrun,
     classify_interfaces,
+    format_load_status,
 )
 
 
@@ -435,7 +437,7 @@ class TestParseShowrunMgmtIp:
         assert r.get("ssh_source_iface", "") == ""
 
     def test_ssh_source_iface_not_found_falls_back(self):
-        # SSH source references Vlan99 but that interface has no IP
+        # SSH source references Vlan99 but that interface has no IP → fallback to first IP
         r = _p("""
             ip ssh source-interface Vlan99
             interface Vlan99
@@ -594,3 +596,124 @@ class TestReadFileSafe:
         f.write_text(content, encoding="utf-8")
         result = read_file_safe(str(f))
         assert result == content
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  format_load_status
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _parsed_from(cfg: str) -> dict:
+    return parse_showrun(textwrap.dedent(cfg))
+
+
+class TestFormatLoadStatus:
+
+    def test_only_physical_ports(self):
+        parsed = _parsed_from("""
+            interface GigabitEthernet1/0/1
+            interface GigabitEthernet1/0/2
+        """)
+        status = format_load_status(parsed)
+        assert "Порти: 2" in status
+
+    def test_mgmt_ip_shown(self):
+        parsed = _parsed_from("""
+            interface Vlan1
+             ip address 10.0.0.1 255.255.255.0
+        """)
+        status = format_load_status(parsed)
+        assert "MGMT: 10.0.0.1" in status
+
+    def test_no_mgmt_ip_omitted(self):
+        parsed = _parsed_from("""
+            interface GigabitEthernet1/0/1
+             switchport mode access
+        """)
+        status = format_load_status(parsed)
+        assert "MGMT" not in status
+
+    def test_port_channel_count_shown(self):
+        parsed = _parsed_from("""
+            interface Port-channel1
+            interface Port-channel2
+        """)
+        status = format_load_status(parsed)
+        assert "Po: 2" in status
+
+    def test_lowercase_port_channel_counted(self):
+        parsed = _parsed_from("""
+            interface port-channel1
+        """)
+        status = format_load_status(parsed)
+        assert "Po: 1" in status
+
+    def test_vlan_count_shown(self):
+        parsed = _parsed_from("""
+            interface Vlan10
+            interface Vlan20
+            interface Vlan30
+        """)
+        status = format_load_status(parsed)
+        assert "VLAN: 3" in status
+
+    def test_loopback_count_shown(self):
+        parsed = _parsed_from("""
+            interface Loopback0
+            interface Loopback1
+        """)
+        status = format_load_status(parsed)
+        assert "Lo: 2" in status
+
+    def test_zero_po_omitted(self):
+        parsed = _parsed_from("""
+            interface GigabitEthernet1/0/1
+        """)
+        assert "Po:" not in format_load_status(parsed)
+
+    def test_zero_vlan_omitted(self):
+        parsed = _parsed_from("""
+            interface GigabitEthernet1/0/1
+        """)
+        assert "VLAN:" not in format_load_status(parsed)
+
+    def test_zero_loopback_omitted(self):
+        parsed = _parsed_from("""
+            interface GigabitEthernet1/0/1
+        """)
+        assert "Lo:" not in format_load_status(parsed)
+
+    def test_separator_between_parts(self):
+        parsed = _parsed_from("""
+            interface Vlan1
+             ip address 10.0.0.1 255.255.255.0
+        """)
+        status = format_load_status(parsed)
+        assert "  ·  " in status
+
+    def test_empty_interfaces(self):
+        parsed = {"hostname": "SW", "mgmt_ip": "", "interfaces": []}
+        status = format_load_status(parsed)
+        assert "Порти: 0" in status
+        assert "MGMT" not in status
+
+    def test_full_mix(self):
+        parsed = _parsed_from("""
+            ip ssh source-interface Vlan99
+            interface GigabitEthernet1/0/1
+            interface GigabitEthernet1/0/2
+            interface Port-channel1
+            interface Vlan10
+            interface Vlan99
+             ip address 10.99.99.1 255.255.255.0
+            interface Loopback0
+        """)
+        status = format_load_status(parsed)
+        assert "MGMT: 10.99.99.1" in status
+        assert "Порти: 2" in status
+        assert "Po: 1" in status
+        assert "VLAN: 2" in status
+        assert "Lo: 1" in status
+
+    def test_returns_string(self):
+        parsed = {"hostname": "SW", "mgmt_ip": "", "interfaces": []}
+        assert isinstance(format_load_status(parsed), str)

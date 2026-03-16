@@ -192,6 +192,22 @@ def classify_interfaces(interfaces: list):
     return physical, logical
 
 
+def format_load_status(parsed: dict) -> str:
+    """Build status bar string shown after a config file is loaded."""
+    physical, logical = classify_interfaces(parsed["interfaces"])
+    po    = sum(1 for i in logical if i["name"].lower().startswith("port-channel"))
+    vlans = sum(1 for i in logical if i["name"].startswith("Vlan"))
+    loops = sum(1 for i in logical if i["name"].startswith("Loopback"))
+    parts = []
+    if parsed.get("mgmt_ip"):
+        parts.append(f"MGMT: {parsed['mgmt_ip']}")
+    parts.append(f"Порти: {len(physical)}")
+    if po:    parts.append(f"Po: {po}")
+    if vlans: parts.append(f"VLAN: {vlans}")
+    if loops: parts.append(f"Lo: {loops}")
+    return "  ·  ".join(parts)
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 #  XML HELPERS
 # ═════════════════════════════════════════════════════════════════════════════
@@ -538,15 +554,18 @@ def build_docx(parsed: dict, user_inputs: dict, output_path: str):
 # ═════════════════════════════════════════════════════════════════════════════
 
 # Dark theme palette (matches reference style)
-_G_BG     = "#282828"
-_G_IN     = "#1e1e1e"
-_G_BTN    = "#1a1a1a"
-_G_FG     = "#e0e0e0"
-_G_LBL    = "#b8b8b8"
-_G_ACCENT = "#00ccff"
-_G_ACCH   = "#55ddff"
-_G_BORDER = "#3a3a3a"
-_G_STATUS = "#94a3b8"
+_G_BG      = "#282828"
+_G_IN      = "#1e1e1e"
+_G_BTN     = "#1a1a1a"
+_G_FG      = "#e0e0e0"
+_G_LBL     = "#b8b8b8"
+_G_ACCENT  = "#00ccff"
+_G_ACCH    = "#55ddff"
+_G_BORDER  = "#3a3a3a"
+_G_STATUS  = "#94a3b8"
+_G_GREEN   = "#22c55e"
+_G_GREENH  = "#4ade80"
+_G_GREENBG = "#0f2a1a"
 
 
 class App(tk.Tk):
@@ -616,18 +635,25 @@ class App(tk.Tk):
         s.configure("Status.TLabel",
             background=_G_BG, foreground=_G_STATUS, font=("Arial", 9))
 
+        s.configure("Loaded.TButton",
+            background=_G_GREENBG, foreground=_G_GREEN,
+            bordercolor=_G_GREEN, lightcolor=_G_GREEN, darkcolor=_G_GREENBG,
+            relief="solid", font=("Arial", 10, "bold"),
+            padding=(12, 6), borderwidth=2)
+        s.map("Loaded.TButton",
+            background=[("active", "#1a3a2a"), ("pressed", "#0a1a10")],
+            foreground=[("active", _G_GREENH)],
+            bordercolor=[("active", _G_GREENH)],
+            lightcolor=[("active", _G_GREENH)])
+
     def _build_ui(self):
         PAD = {"padx": 10, "pady": 5}
         f = ttk.Frame(self, padding="14 12 14 10")
         f.pack(fill="both", expand=True)
         f.columnconfigure(1, weight=1)
 
-        ttk.Label(f, text="Config файл:").grid(
-            row=0, column=0, sticky="e", **PAD)
-        ttk.Entry(f, textvariable=self._src, width=40).grid(
-            row=0, column=1, sticky="ew", **PAD)
-        ttk.Button(f, text="Огляд…", command=self._browse).grid(
-            row=0, column=2, **PAD)
+        self._btn_load = ttk.Button(f, text="Завантажити", command=self._browse)
+        self._btn_load.grid(row=0, column=0, columnspan=3, sticky="ew", **PAD)
 
         ttk.Label(f, text="Модель / Вендор:").grid(
             row=1, column=0, sticky="e", **PAD)
@@ -657,10 +683,11 @@ class App(tk.Tk):
         self._src.set(path)
         try:
             parsed = parse_showrun(read_file_safe(path))
-            if parsed.get("mgmt_ip"):
-                self._status.set(f"MGMT IP: {parsed['mgmt_ip']}")
+            self._btn_load.configure(text="Завантажено", style="Loaded.TButton")
+            self._status.set(format_load_status(parsed))
         except Exception:
-            pass
+            self._btn_load.configure(text="Завантажити", style="TButton")
+            self._status.set("Помилка читання файлу.")
 
     def _generate(self):
         src = self._src.get().strip()
