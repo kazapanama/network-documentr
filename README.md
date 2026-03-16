@@ -1,4 +1,4 @@
-# ShowRunDoc
+# network-documentr
 
 Генератор DOCX-документації для Cisco-обладнання на основі виводу `show running-config`.
 
@@ -88,7 +88,7 @@ python main.py
 
 ### Готовий .exe
 
-Просто запустіть `dist\ShowRunDoc.exe` — без Python і без залежностей.
+Просто запустіть `dist\network-documentr.exe` — без Python і без залежностей.
 
 ---
 
@@ -103,6 +103,17 @@ MGMT IP підхоплюється автоматично (з `ip ssh source-int
 
 ---
 
+## Тести
+
+```bash
+pip install pytest
+python -m pytest tests/ -v
+```
+
+186 тестів покривають парсер (`test_parser.py`) та DOCX-білдер (`test_docx_builder.py`).
+
+---
+
 ## Збірка .exe
 
 ```bat
@@ -112,12 +123,12 @@ build.bat
 Використовує PyInstaller з прапорами:
 
 ```
---onefile --windowed --name ShowRunDoc --collect-all=docx
+--onefile --windowed --name network-documentr --collect-all=docx
 ```
 
 > `--collect-all=docx` є критичним: без нього .exe не знаходить `docx/templates/default.docx` і падає при запуску.
 
-Результат: `dist\ShowRunDoc.exe`
+Результат: `dist\network-documentr.exe`
 
 ---
 
@@ -125,13 +136,16 @@ build.bat
 
 ```
 network-documentr/
-├── main.py            # Єдиний source-файл: парсер + DOCX-білдер + GUI
-├── build.bat          # Збірка .exe через PyInstaller
-├── requirements.txt   # python-docx, lxml, pyinstaller
-├── ShowRunDoc.spec    # Автогенерований PyInstaller spec
+├── main.py                    # Єдиний source-файл: парсер + DOCX-білдер + GUI
+├── build.bat                  # Збірка .exe через PyInstaller
+├── requirements.txt           # python-docx, lxml, pyinstaller
+├── network-documentr.spec     # PyInstaller spec
+├── tests/
+│   ├── test_parser.py         # Юніт-тести парсера
+│   └── test_docx_builder.py   # Тести DOCX-білдера
 ├── dist/
-│   └── ShowRunDoc.exe # Готовий бінарник
-└── CLAUDE.md          # Інструкції для AI-асистента
+│   └── network-documentr.exe  # Готовий бінарник
+└── CLAUDE.md                  # Інструкції для AI-асистента
 ```
 
 ---
