@@ -698,6 +698,8 @@ class App(_BASE):
 
         self._setup_styles()
         self._build_ui()
+        self.update_idletasks()
+        self.geometry(f"560x{self.winfo_reqheight()}")
         self.after(50, self._dark_titlebar)
 
     def _dark_titlebar(self):
@@ -768,6 +770,17 @@ class App(_BASE):
             bordercolor=[("active", _G_GREENH)],
             lightcolor=[("active", _G_GREENH)])
 
+        s.configure("Blue.TButton",
+            background="#0078d4", foreground="#ffffff",
+            bordercolor="#0078d4", lightcolor="#0078d4", darkcolor="#0078d4",
+            relief="solid", font=("Arial", 10, "bold"),
+            padding=(12, 6), borderwidth=0)
+        s.map("Blue.TButton",
+            background=[("active", "#106ebe"), ("pressed", "#005a9e")],
+            foreground=[("active", "#ffffff")],
+            bordercolor=[("active", "#106ebe")],
+            lightcolor=[("active", "#106ebe")])
+
     def _build_ui(self):
         PAD = {"padx": 10, "pady": 5}
         f = ttk.Frame(self, padding="14 12 14 10")
@@ -777,7 +790,8 @@ class App(_BASE):
         self._f = f
         self._dynamic_widgets: list = []
 
-        self._btn_load = ttk.Button(f, text="Завантажити", command=self._browse,
+        self._btn_load = ttk.Button(f, text="Завантажити конфігурації",
+                                    style="Blue.TButton", command=self._browse,
                                     cursor="hand2")
         self._btn_load.grid(row=0, column=0, columnspan=3, sticky="ew", **PAD)
         if _HAS_DND:
@@ -789,9 +803,11 @@ class App(_BASE):
 
         ttk.Label(f, textvariable=self._status, style="Status.TLabel").grid(
             row=1000, column=0, columnspan=2, sticky="w", padx=10)
-        ttk.Button(f, text="Створити DOCX", command=self._generate,
-                   cursor="hand2").grid(
-            row=1000, column=2, padx=10, pady=2)
+        self._btn_generate = ttk.Button(f, text="Створити DOCX",
+                                        style="Blue.TButton", command=self._generate,
+                                        cursor="hand2")
+        self._btn_generate.grid(row=1000, column=2, padx=10, pady=2)
+        self._btn_generate.grid_remove()
 
     def _rebuild_entries_ui(self):
         for w in self._dynamic_widgets:
@@ -848,13 +864,14 @@ class App(_BASE):
         self._paths.pop(index)
         n = len(self._config_entries)
         if n == 0:
-            self._btn_load.configure(text="Завантажити", style="TButton")
+            self._btn_load.configure(text="Завантажити конфігурації", style="Blue.TButton")
+            self._btn_generate.grid_remove()
             self._status.set("Оберіть файл конфігурації та заповніть поля.")
             self._rebuild_entries_ui()
-            self.geometry("560x155")
+            self.update_idletasks()
+            self.geometry(f"560x{self.winfo_reqheight()}")
         else:
-            label = "Завантажено" if n == 1 else f"Завантажено ({n})"
-            self._btn_load.configure(text=label, style="Loaded.TButton")
+            self._btn_load.configure(text=f"Завантажено конфігурацій: {n}", style="Loaded.TButton")
             self._rebuild_entries_ui()
 
     def _browse(self):
@@ -872,7 +889,7 @@ class App(_BASE):
         except Exception:
             self._paths = []
             self._config_entries = []
-            self._btn_load.configure(text="Завантажити", style="TButton")
+            self._btn_load.configure(text="Завантажити конфігурації", style="Blue.TButton")
             self._status.set("Помилка читання файлу.")
             return
 
@@ -887,8 +904,8 @@ class App(_BASE):
             for p, parsed in zip(paths, parsed_list)
         ]
         n = len(paths)
-        label = "Завантажено" if n == 1 else f"Завантажено ({n})"
-        self._btn_load.configure(text=label, style="Loaded.TButton")
+        self._btn_load.configure(text=f"Завантажено конфігурацій: {n}", style="Loaded.TButton")
+        self._btn_generate.grid(row=1000, column=2, padx=10, pady=2)
         self._status.set("")
         self._rebuild_entries_ui()
 
