@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ShowRunDoc — Cisco 'show running-config' → DOCX generator
+network-documentr — Cisco 'show running-config' → DOCX generator
 """
 
 import re
@@ -686,7 +686,7 @@ _G_GREENBG = "#0f2a1a"
 class App(_BASE):
     def __init__(self):
         super().__init__()
-        self.title("ShowRunDoc — Cisco DOCX Generator")
+        self.title("network-documentr — Cisco DOCX Generator")
         self.resizable(False, False)
         self.geometry("560x215")
         self.configure(bg=_G_BG)
@@ -770,8 +770,8 @@ class App(_BASE):
         self._btn_load = ttk.Button(f, text="Завантажити", command=self._browse)
         self._btn_load.grid(row=0, column=0, columnspan=3, sticky="ew", **PAD)
         if _HAS_DND:
-            self._btn_load.drop_target_register(DND_FILES)
-            self._btn_load.dnd_bind("<<Drop>>", self._on_drop)
+            self.drop_target_register(DND_FILES)
+            self.dnd_bind("<<Drop>>", self._on_drop)
 
         ttk.Label(f, text="Модель / Вендор:").grid(
             row=1, column=0, sticky="e", **PAD)
