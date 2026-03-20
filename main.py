@@ -687,13 +687,12 @@ class App(_BASE):
     def __init__(self):
         super().__init__()
         self.title("network-documentr — Cisco DOCX Generator")
-        self.resizable(False, False)
-        self.geometry("560x215")
+        self.resizable(False, True)
+        self.geometry("560x155")
         self.configure(bg=_G_BG)
 
         self._paths: list = []
-        self._model  = tk.StringVar()
-        self._serial = tk.StringVar()
+        self._config_entries: list = []
         self._status = tk.StringVar(
             value="Оберіть файл конфігурації та заповніть поля.")
 
@@ -750,6 +749,14 @@ class App(_BASE):
         s.configure("Status.TLabel",
             background=_G_BG, foreground=_G_STATUS, font=("Arial", 9))
 
+        s.configure("X.TButton",
+            background=_G_BG, foreground="#ff6b6b",
+            borderwidth=0, relief="flat", font=("Arial", 20, "bold"),
+            padding=(4, 0))
+        s.map("X.TButton",
+            foreground=[("active", "#ff4444")],
+            background=[("active", _G_BG), ("pressed", _G_BG)])
+
         s.configure("Loaded.TButton",
             background=_G_GREENBG, foreground=_G_GREEN,
             bordercolor=_G_GREEN, lightcolor=_G_GREEN, darkcolor=_G_GREENBG,
@@ -767,29 +774,88 @@ class App(_BASE):
         f.pack(fill="both", expand=True)
         f.columnconfigure(1, weight=1)
 
-        self._btn_load = ttk.Button(f, text="Завантажити", command=self._browse)
+        self._f = f
+        self._dynamic_widgets: list = []
+
+        self._btn_load = ttk.Button(f, text="Завантажити", command=self._browse,
+                                    cursor="hand2")
         self._btn_load.grid(row=0, column=0, columnspan=3, sticky="ew", **PAD)
         if _HAS_DND:
             self.drop_target_register(DND_FILES)
             self.dnd_bind("<<Drop>>", self._on_drop)
 
-        ttk.Label(f, text="Модель / Вендор:").grid(
-            row=1, column=0, sticky="e", **PAD)
-        ttk.Entry(f, textvariable=self._model, width=40).grid(
-            row=1, column=1, columnspan=2, sticky="ew", **PAD)
-
-        ttk.Label(f, text="Серійний номер:").grid(
-            row=2, column=0, sticky="e", **PAD)
-        ttk.Entry(f, textvariable=self._serial, width=40).grid(
-            row=2, column=1, columnspan=2, sticky="ew", **PAD)
-
         ttk.Separator(f, orient="horizontal").grid(
-            row=3, column=0, columnspan=3, sticky="ew", pady=8)
+            row=999, column=0, columnspan=3, sticky="ew", pady=8)
 
         ttk.Label(f, textvariable=self._status, style="Status.TLabel").grid(
-            row=4, column=0, columnspan=2, sticky="w", padx=10)
-        ttk.Button(f, text="Створити DOCX", command=self._generate).grid(
-            row=4, column=2, padx=10, pady=2)
+            row=1000, column=0, columnspan=2, sticky="w", padx=10)
+        ttk.Button(f, text="Створити DOCX", command=self._generate,
+                   cursor="hand2").grid(
+            row=1000, column=2, padx=10, pady=2)
+
+    def _rebuild_entries_ui(self):
+        for w in self._dynamic_widgets:
+            w.destroy()
+        self._dynamic_widgets = []
+
+        PAD = {"padx": 10, "pady": 3}
+        f = self._f
+        row = 1
+        for i, entry in enumerate(self._config_entries):
+            if i > 0:
+                w = ttk.Separator(f, orient="horizontal")
+                w.grid(row=row, column=0, columnspan=3, sticky="ew", pady=4)
+                self._dynamic_widgets.append(w)
+                row += 1
+
+            filename = Path(entry["path"]).name
+            w = ttk.Label(f, text=filename, style="Status.TLabel")
+            w.grid(row=row, column=0, columnspan=2, sticky="w", padx=10, pady=(8, 1))
+            self._dynamic_widgets.append(w)
+            w = ttk.Button(f, text="×", style="X.TButton", cursor="hand2",
+                           command=lambda idx=i: self._remove_entry(idx))
+            w.grid(row=row, column=2, sticky="e", padx=(0, 10), pady=(6, 0))
+            self._dynamic_widgets.append(w)
+            row += 1
+
+            w = ttk.Label(f, text="Модель / Вендор:")
+            w.grid(row=row, column=0, sticky="e", **PAD)
+            self._dynamic_widgets.append(w)
+            w = ttk.Entry(f, textvariable=entry["model"], width=40)
+            w.grid(row=row, column=1, columnspan=2, sticky="ew", **PAD)
+            self._dynamic_widgets.append(w)
+            row += 1
+
+            w = ttk.Label(f, text="Серійний номер:")
+            w.grid(row=row, column=0, sticky="e", **PAD)
+            self._dynamic_widgets.append(w)
+            w = ttk.Entry(f, textvariable=entry["serial"], width=40)
+            w.grid(row=row, column=1, columnspan=2, sticky="ew", **PAD)
+            self._dynamic_widgets.append(w)
+            row += 1
+
+            status_text = format_load_status(entry["parsed"])
+            w = ttk.Label(f, text=status_text, style="Status.TLabel")
+            w.grid(row=row, column=0, columnspan=3, sticky="w", padx=10, pady=(1, 4))
+            self._dynamic_widgets.append(w)
+            row += 1
+
+        self.update_idletasks()
+        self.geometry(f"560x{self.winfo_reqheight()}")
+
+    def _remove_entry(self, index: int):
+        self._config_entries.pop(index)
+        self._paths.pop(index)
+        n = len(self._config_entries)
+        if n == 0:
+            self._btn_load.configure(text="Завантажити", style="TButton")
+            self._status.set("Оберіть файл конфігурації та заповніть поля.")
+            self._rebuild_entries_ui()
+            self.geometry("560x155")
+        else:
+            label = "Завантажено" if n == 1 else f"Завантажено ({n})"
+            self._btn_load.configure(text=label, style="Loaded.TButton")
+            self._rebuild_entries_ui()
 
     def _browse(self):
         paths = filedialog.askopenfilenames(
@@ -805,18 +871,26 @@ class App(_BASE):
             parsed_list = [parse_showrun(read_file_safe(p)) for p in paths]
         except Exception:
             self._paths = []
+            self._config_entries = []
             self._btn_load.configure(text="Завантажити", style="TButton")
             self._status.set("Помилка читання файлу.")
             return
 
         self._paths = list(paths)
+        self._config_entries = [
+            {
+                "path":   p,
+                "parsed": parsed,
+                "model":  tk.StringVar(),
+                "serial": tk.StringVar(),
+            }
+            for p, parsed in zip(paths, parsed_list)
+        ]
         n = len(paths)
-        if n == 1:
-            self._btn_load.configure(text="Завантажено", style="Loaded.TButton")
-            self._status.set(format_load_status(parsed_list[0]))
-        else:
-            self._btn_load.configure(text=f"Завантажено ({n})", style="Loaded.TButton")
-            self._status.set(f"{n} конфігів готові до генерації")
+        label = "Завантажено" if n == 1 else f"Завантажено ({n})"
+        self._btn_load.configure(text=label, style="Loaded.TButton")
+        self._status.set("")
+        self._rebuild_entries_ui()
 
     def _on_drop(self, event):
         tokens = re.findall(r'\{[^}]+\}|\S+', event.data)
@@ -825,25 +899,19 @@ class App(_BASE):
             self._load_files(paths)
 
     def _generate(self):
-        if not self._paths:
+        if not self._config_entries:
             messagebox.showerror("Помилка",
                                  "Оберіть файл(и) show running-config.")
             return
 
-        user_inputs = {
-            "model":  self._model.get().strip(),
-            "serial": self._serial.get().strip(),
-        }
-
-        if len(self._paths) == 1:
-            src = self._paths[0]
-            try:
-                raw    = read_file_safe(src)
-                parsed = parse_showrun(raw)
-            except Exception as exc:
-                messagebox.showerror("Помилка читання файлу", str(exc))
-                return
-
+        if len(self._config_entries) == 1:
+            entry = self._config_entries[0]
+            src = entry["path"]
+            parsed = entry["parsed"]
+            user_inputs = {
+                "model":  entry["model"].get().strip(),
+                "serial": entry["serial"].get().strip(),
+            }
             hostname = parsed.get("hostname") or Path(src).stem
             save_path = filedialog.asksaveasfilename(
                 title="Зберегти DOCX як…",
@@ -882,16 +950,19 @@ class App(_BASE):
             self.update()
             saved = []
             errors = []
-            for path in self._paths:
+            for entry in self._config_entries:
                 try:
-                    raw    = read_file_safe(path)
-                    parsed = parse_showrun(raw)
-                    hostname = parsed.get("hostname") or Path(path).stem
+                    parsed = entry["parsed"]
+                    user_inputs = {
+                        "model":  entry["model"].get().strip(),
+                        "serial": entry["serial"].get().strip(),
+                    }
+                    hostname = parsed.get("hostname") or Path(entry["path"]).stem
                     out_path = os.path.join(out_dir, f"{hostname}_doc.docx")
                     build_docx(parsed, user_inputs, out_path)
                     saved.append(Path(out_path).name)
                 except Exception as exc:
-                    errors.append(f"{Path(path).name}: {exc}")
+                    errors.append(f"{Path(entry['path']).name}: {exc}")
 
             if errors:
                 messagebox.showerror("Помилки генерації", "\n".join(errors))
