@@ -5,6 +5,7 @@ network-documentr — Cisco 'show running-config' → DOCX generator
 
 import re
 import os
+import sys
 from datetime import date
 from pathlib import Path
 
@@ -668,6 +669,11 @@ except ImportError:
     _HAS_DND = False
     DND_FILES = None
 
+def _asset(name: str) -> str:
+    """Resolve path to an asset file — works both in dev and PyInstaller .exe."""
+    base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, 'assets', name)
+
 # Dark theme palette (matches reference style)
 _G_BG      = "#282828"
 _G_IN      = "#1e1e1e"
@@ -697,6 +703,7 @@ class App(_BASE):
             value="Оберіть файл конфігурації та заповніть поля.")
 
         self._setup_styles()
+        self._close_img = self._load_icon("close.png")
         self._build_ui()
         self.update_idletasks()
         self.geometry(f"560x{self.winfo_reqheight()}")
@@ -715,6 +722,12 @@ class App(_BASE):
                 hwnd, 20, ctypes.byref(val), ctypes.sizeof(val))
         except Exception:
             pass
+
+    def _load_icon(self, name: str):
+        try:
+            return tk.PhotoImage(file=_asset(name))
+        except Exception:
+            return None
 
     def _setup_styles(self):
         s = ttk.Style(self)
@@ -750,6 +763,8 @@ class App(_BASE):
         s.configure("TSeparator", background=_G_BORDER)
         s.configure("Status.TLabel",
             background=_G_BG, foreground=_G_STATUS, font=("Arial", 9))
+        s.configure("Filename.TLabel",
+            background=_G_BG, foreground=_G_FG, font=("Arial", 12))
 
         s.configure("X.TButton",
             background=_G_BG, foreground="#ff6b6b",
@@ -825,34 +840,35 @@ class App(_BASE):
                 row += 1
 
             filename = Path(entry["path"]).name
-            w = ttk.Label(f, text=filename, style="Status.TLabel")
-            w.grid(row=row, column=0, columnspan=2, sticky="w", padx=10, pady=(8, 1))
+            w = ttk.Label(f, text=filename, style="Filename.TLabel")
+            w.grid(row=row, column=0, columnspan=2, sticky="w", padx=10, pady=(8, 0))
             self._dynamic_widgets.append(w)
-            w = ttk.Button(f, text="×", style="X.TButton", cursor="hand2",
+            _xkw = {"image": self._close_img} if self._close_img else {"text": "×"}
+            w = ttk.Button(f, **_xkw, style="X.TButton", cursor="hand2",
                            command=lambda idx=i: self._remove_entry(idx))
             w.grid(row=row, column=2, sticky="e", padx=(0, 10), pady=(6, 0))
             self._dynamic_widgets.append(w)
             row += 1
 
+            status_text = format_load_status(entry["parsed"])
+            w = ttk.Label(f, text=status_text, style="Status.TLabel")
+            w.grid(row=row, column=0, columnspan=3, sticky="w", padx=10, pady=(0, 6))
+            self._dynamic_widgets.append(w)
+            row += 1
+
             w = ttk.Label(f, text="Модель / Вендор:")
-            w.grid(row=row, column=0, sticky="e", **PAD)
+            w.grid(row=row, column=0, sticky="w", **PAD)
             self._dynamic_widgets.append(w)
             w = ttk.Entry(f, textvariable=entry["model"], width=40)
-            w.grid(row=row, column=1, columnspan=2, sticky="ew", **PAD)
+            w.grid(row=row, column=1, columnspan=2, sticky="ew", padx=(0, 10), pady=3)
             self._dynamic_widgets.append(w)
             row += 1
 
             w = ttk.Label(f, text="Серійний номер:")
-            w.grid(row=row, column=0, sticky="e", **PAD)
+            w.grid(row=row, column=0, sticky="w", **PAD)
             self._dynamic_widgets.append(w)
             w = ttk.Entry(f, textvariable=entry["serial"], width=40)
-            w.grid(row=row, column=1, columnspan=2, sticky="ew", **PAD)
-            self._dynamic_widgets.append(w)
-            row += 1
-
-            status_text = format_load_status(entry["parsed"])
-            w = ttk.Label(f, text=status_text, style="Status.TLabel")
-            w.grid(row=row, column=0, columnspan=3, sticky="w", padx=10, pady=(1, 4))
+            w.grid(row=row, column=1, columnspan=2, sticky="ew", padx=(0, 10), pady=3)
             self._dynamic_widgets.append(w)
             row += 1
 
