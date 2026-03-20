@@ -2,7 +2,7 @@
 echo Building network-documentr...
 echo.
 
-.venv\Scripts\python.exe -m PyInstaller --onefile --windowed --name network-documentr --collect-all=docx --collect-all=tkinterdnd2 --add-data "assets;assets" main.py
+.venv\Scripts\python.exe -m PyInstaller --onefile --windowed --name network-documentr --icon "assets\app_icon.ico" --collect-all=docx --collect-all=tkinterdnd2 --add-data "assets;assets" main.py
 
 if %ERRORLEVEL% == 0 (
     echo.

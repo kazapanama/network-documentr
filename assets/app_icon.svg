@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Layer_1" xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 256 256">
+  <defs>
+    <style>
+      .st0 { fill: none; }
+      .st1 { fill: #282828; }
+      .st2 { fill: #0cf; }
+    </style>
+  </defs>
+
+  <!-- Document shadow/body (dark) -->
+  <path class="st1" d="M46.47,26.27s-3.19-15.9,14.65-14.76c17.84,1.14,119.57,0,119.57,0l37.38,35.99v189.47s.55,11.49-18.69,7.52c-19.25-3.98-143.77.84-143.77.84,0,0-11.78-.15-9.14-15.39s0-203.66,0-203.66Z"/>
+
+  <!-- Document outline invisible path -->
+  <path class="st0" d="M180.69,11.51H53.99c-4.15,0-7.52,3.36-7.52,7.52v217.94c0,4.15,3.36,7.52,7.52,7.52h156.57c4.15,0,7.52-3.36,7.52-7.52V47.5l-37.38-35.99ZM188.2,47.5c-4.15,0-7.52-3.36-7.52-7.52V11.51l37.38,35.99h-29.86Z"/>
+
+  <!-- Document cyan outline + folded corner -->
+  <path class="st2" d="M214.1,231.53v5.44c0,1.95-1.59,3.54-3.54,3.54H53.99c-1.95,0-3.54-1.59-3.54-3.54V19.03c0-1.95,1.59-3.54,3.54-3.54h122.74v24.5c0,6.33,5.15,11.49,11.48,11.49h25.89v180.06c2.73.25,4.29,4.16,7.94-1.52V47.53c0-.22-.02-.44-.05-.66h0c-.02-.11-.04-.22-.07-.33h0c-.18-.68-.53-1.31-1.05-1.82h0l-37.38-36h0c-.54-.51-1.19-.85-1.88-1c-.1-.02-.2-.04-.3-.05h0c-.17-.03-.37-.03-.51-.03H53.99c-6.33,0-11.49,5.15-11.49,11.49v217.95c0,6.33,5.15,11.48,11.49,11.48h156.57c6.33,0,11.49-5.15,11.49-11.48v-6.95c-2.56.74-5.21,1.26-7.94,1.52ZM184.66,20.85l23.56,22.68h-20.01c-1.95,0-3.54-1.59-3.54-3.54v-19.14h0Z"/>
+
+  <!-- ═══ SWITCH DEVICE ═══ -->
+
+  <!-- Switch outer border (cyan rectangle) -->
+  <rect class="st2" x="61" y="50" width="142" height="46" rx="5" ry="5"/>
+
+  <!-- Switch inner background (dark) -->
+  <rect class="st1" x="65" y="54" width="134" height="38" rx="3" ry="3"/>
+
+  <!-- Ports — row 1 (top): 10 ports, each 9×13px, gap 4px -->
+  <!-- total: 10*9 + 9*4 = 90+36 = 126px, start x=70 -->
+  <rect class="st2" x="70"  y="57" width="9" height="13" rx="1" ry="1"/>
+  <rect class="st2" x="83"  y="57" width="9" height="13" rx="1" ry="1"/>
+  <rect class="st2" x="96"  y="57" width="9" height="13" rx="1" ry="1"/>
+  <rect class="st2" x="109" y="57" width="9" height="13" rx="1" ry="1"/>
+  <rect class="st2" x="122" y="57" width="9" height="13" rx="1" ry="1"/>
+  <rect class="st2" x="135" y="57" width="9" height="13" rx="1" ry="1"/>
+  <rect class="st2" x="148" y="57" width="9" height="13" rx="1" ry="1"/>
+  <rect class="st2" x="161" y="57" width="9" height="13" rx="1" ry="1"/>
+
+  <!-- Ports — row 2 (bottom): same 8 ports -->
+  <rect class="st2" x="70"  y="74" width="9" height="13" rx="1" ry="1"/>
+  <rect class="st2" x="83"  y="74" width="9" height="13" rx="1" ry="1"/>
+  <rect class="st2" x="96"  y="74" width="9" height="13" rx="1" ry="1"/>
+  <rect class="st2" x="109" y="74" width="9" height="13" rx="1" ry="1"/>
+  <rect class="st2" x="122" y="74" width="9" height="13" rx="1" ry="1"/>
+  <rect class="st2" x="135" y="74" width="9" height="13" rx="1" ry="1"/>
+  <rect class="st2" x="148" y="74" width="9" height="13" rx="1" ry="1"/>
+  <rect class="st2" x="161" y="74" width="9" height="13" rx="1" ry="1"/>
+
+  <!-- Uplink ports (2 bigger ports on the right) -->
+  <rect class="st2" x="178" y="57" width="11" height="13" rx="1" ry="1"/>
+  <rect class="st2" x="178" y="74" width="11" height="13" rx="1" ry="1"/>
+
+  <!-- Status LED -->
+  <circle class="st2" cx="194.5" cy="63.5" r="3"/>
+  <circle class="st2" cx="194.5" cy="80.5" r="3"/>
+
+  <!-- ═══ TABLE ROWS (port documentation below switch) ═══ -->
+  <!-- Row 1 -->
+  <ellipse class="st2" cx="69.5" cy="113" rx="3.65" ry="3.97"/>
+  <path class="st2" d="M82.5,117h116.5c2.01,0,3.65-1.78,3.65-3.97s-1.63-3.97-3.65-3.97H82.5c-2.01,0-3.65,1.78-3.65,3.97s1.63,3.97,3.65,3.97Z"/>
+
+  <!-- Row 2 -->
+  <ellipse class="st2" cx="69.5" cy="130" rx="3.65" ry="3.97"/>
+  <path class="st2" d="M82.5,134h116.5c2.01,0,3.65-1.78,3.65-3.97s-1.63-3.97-3.65-3.97H82.5c-2.01,0-3.65,1.78-3.65,3.97s1.63,3.97,3.65,3.97Z"/>
+
+  <!-- Row 3 -->
+  <ellipse class="st2" cx="69.5" cy="147" rx="3.65" ry="3.97"/>
+  <path class="st2" d="M82.5,151h116.5c2.01,0,3.65-1.78,3.65-3.97s-1.63-3.97-3.65-3.97H82.5c-2.01,0-3.65,1.78-3.65,3.97s1.63,3.97,3.65,3.97Z"/>
+
+  <!-- Row 4 -->
+  <ellipse class="st2" cx="69.5" cy="164" rx="3.65" ry="3.97"/>
+  <path class="st2" d="M82.5,168h116.5c2.01,0,3.65-1.78,3.65-3.97s-1.63-3.97-3.65-3.97H82.5c-2.01,0-3.65,1.78-3.65,3.97s1.63,3.97,3.65,3.97Z"/>
+
+  <!-- Row 5 -->
+  <ellipse class="st2" cx="69.5" cy="181" rx="3.65" ry="3.97"/>
+  <path class="st2" d="M82.5,185h116.5c2.01,0,3.65-1.78,3.65-3.97s-1.63-3.97-3.65-3.97H82.5c-2.01,0-3.65,1.78-3.65,3.97s1.63,3.97,3.65,3.97Z"/>
+
+  <!-- Row 6 -->
+  <ellipse class="st2" cx="69.5" cy="198" rx="3.65" ry="3.97"/>
+  <path class="st2" d="M82.5,202h116.5c2.01,0,3.65-1.78,3.65-3.97s-1.63-3.97-3.65-3.97H82.5c-2.01,0-3.65,1.78-3.65,3.97s1.63,3.97,3.65,3.97Z"/>
+
+  <!-- Row 7 -->
+  <ellipse class="st2" cx="69.5" cy="215" rx="3.65" ry="3.97"/>
+  <path class="st2" d="M82.5,219h116.5c2.01,0,3.65-1.78,3.65-3.97s-1.63-3.97-3.65-3.97H82.5c-2.01,0-3.65,1.78-3.65,3.97s1.63,3.97,3.65,3.97Z"/>
+
+</svg>

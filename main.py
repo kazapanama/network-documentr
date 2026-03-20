@@ -728,6 +728,10 @@ class App(_BASE):
         self.resizable(False, True)
         self.geometry("560x155")
         self.configure(bg=_G_BG)
+        try:
+            self.iconbitmap(_asset("app_icon.ico"))
+        except Exception:
+            pass  # не критично — іконка просто не відобразиться
 
         self._paths: list = []
         self._config_entries: list = []
