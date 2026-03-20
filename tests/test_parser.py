@@ -12,6 +12,7 @@ from main import (
     parse_showrun,
     classify_interfaces,
     format_load_status,
+    parse_version_inventory,
 )
 
 
@@ -1029,3 +1030,93 @@ class TestParseShowrunIntegrationNotes:
         order = ["Po2 member", "Voice:10", "PortFast", "RootGuard", "BPDUGuard", "SecMax:3", "shutdown"]
         positions = [notes.index(tok) for tok in order]
         assert positions == sorted(positions), f"Wrong order in: {notes}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  parse_version_inventory
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestParseVersionInventory:
+
+    def test_inventory_pid_sn(self):
+        text = textwrap.dedent("""\
+            NAME: "1", DESCR: "Cisco Catalyst 9300-48U Switch"
+            PID: C9300-48U        , VID: V01  , SN: FDO1234ABCD
+        """)
+        r = parse_version_inventory(text)
+        assert r["model"] == "C9300-48U"
+        assert r["serial"] == "FDO1234ABCD"
+
+    def test_inventory_with_command_prefix(self):
+        text = textwrap.dedent("""\
+            Switch#show inventory
+            NAME: "1", DESCR: "WS-C3750G-48PS-S"
+            PID: WS-C3750G-48PS-S , VID: V06  , SN: CAT1234ABCD
+        """)
+        r = parse_version_inventory(text)
+        assert r["model"] == "WS-C3750G-48PS-S"
+        assert r["serial"] == "CAT1234ABCD"
+
+    def test_version_model_and_system_serial(self):
+        text = textwrap.dedent("""\
+            Cisco IOS Software, Version 15.2(7)E6
+            Model number                  : WS-C3850-48T
+            System serial number          : FOC1234ABCD
+        """)
+        r = parse_version_inventory(text)
+        assert r["model"] == "WS-C3850-48T"
+        assert r["serial"] == "FOC1234ABCD"
+
+    def test_version_processor_board_id(self):
+        text = textwrap.dedent("""\
+            cisco WS-C3750G-48PS (PowerPC405) processor
+            Processor board ID CAT0987ZZZZ
+        """)
+        r = parse_version_inventory(text)
+        assert r["model"] == ""
+        assert r["serial"] == "CAT0987ZZZZ"
+
+    def test_inventory_priority_over_version(self):
+        text = textwrap.dedent("""\
+            Model number                  : WS-C3850-48T
+            System serial number          : FOC0000VERSION
+            PID: C9300-48U        , VID: V01  , SN: FDO9999INVENTORY
+        """)
+        r = parse_version_inventory(text)
+        assert r["model"] == "C9300-48U"
+        assert r["serial"] == "FDO9999INVENTORY"
+
+    def test_empty_text(self):
+        r = parse_version_inventory("")
+        assert r == {"model": "", "serial": ""}
+
+    def test_no_relevant_data(self):
+        text = "hostname SW-CORE\nip domain-name example.com\n"
+        r = parse_version_inventory(text)
+        assert r == {"model": "", "serial": ""}
+
+    def test_mixed_with_running_config(self):
+        text = textwrap.dedent("""\
+            hostname SW-CORE
+            ip ssh source-interface Vlan1
+            interface GigabitEthernet1/0/1
+             description uplink
+             no shutdown
+            !
+            Switch#show inventory
+            NAME: "1", DESCR: "Cisco Catalyst 9300-48U Switch"
+            PID: C9300-48U        , VID: V01  , SN: FDO5555MIXED
+        """)
+        r = parse_version_inventory(text)
+        assert r["model"] == "C9300-48U"
+        assert r["serial"] == "FDO5555MIXED"
+
+    def test_inventory_first_pid_wins_for_stacked(self):
+        text = textwrap.dedent("""\
+            NAME: "Switch 1", DESCR: "WS-C3750G-48PS-S"
+            PID: WS-C3750G-48PS-S , VID: V06  , SN: CAT1111FIRST
+            NAME: "Switch 2", DESCR: "WS-C3750G-48PS-S"
+            PID: WS-C3750G-48PS-S , VID: V06  , SN: CAT2222SECOND
+        """)
+        r = parse_version_inventory(text)
+        assert r["serial"] == "CAT1111FIRST"

@@ -237,6 +237,38 @@ def parse_showrun(text: str) -> dict:
     return result
 
 
+def parse_version_inventory(text: str) -> dict:
+    """Extract model and serial from show inventory / show version blocks."""
+    model = ""
+    serial = ""
+
+    # Priority 1: show inventory — first PID line (chassis / main unit)
+    m = re.search(r"^PID:\s*(\S+)\s*,.*SN:\s*(\S+)", text, re.MULTILINE)
+    if m:
+        model = m.group(1)
+        serial = m.group(2)
+
+    # Priority 2: show version — Model number
+    if not model:
+        m = re.search(r"^Model [Nn]umber\s*:\s*(\S+)", text, re.MULTILINE)
+        if m:
+            model = m.group(1)
+
+    # Priority 3: show version — System serial number
+    if not serial:
+        m = re.search(r"^System [Ss]erial [Nn]umber\s*:\s*(\S+)", text, re.MULTILINE)
+        if m:
+            serial = m.group(1)
+
+    # Priority 4: show version — Processor board ID (older platforms e.g. 3750)
+    if not serial:
+        m = re.search(r"^Processor board ID\s+(\S+)", text, re.MULTILINE)
+        if m:
+            serial = m.group(1)
+
+    return {"model": model, "serial": serial}
+
+
 def classify_interfaces(interfaces: list):
     physical = [i for i in interfaces if i["iface_class"] == "physical"]
     logical  = [i for i in interfaces if i["iface_class"] == "logical"]
@@ -901,7 +933,9 @@ class App(_BASE):
 
     def _load_files(self, paths: list):
         try:
-            parsed_list = [parse_showrun(read_file_safe(p)) for p in paths]
+            texts = [read_file_safe(p) for p in paths]
+            parsed_list = [parse_showrun(t) for t in texts]
+            detected_list = [parse_version_inventory(t) for t in texts]
         except Exception:
             self._paths = []
             self._config_entries = []
@@ -914,10 +948,10 @@ class App(_BASE):
             {
                 "path":   p,
                 "parsed": parsed,
-                "model":  tk.StringVar(),
-                "serial": tk.StringVar(),
+                "model":  tk.StringVar(value=det["model"]),
+                "serial": tk.StringVar(value=det["serial"]),
             }
-            for p, parsed in zip(paths, parsed_list)
+            for p, parsed, det in zip(paths, parsed_list, detected_list)
         ]
         n = len(paths)
         self._btn_load.configure(text=f"Завантажено конфігурацій: {n}", style="Loaded.TButton")
