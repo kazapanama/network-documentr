@@ -43,9 +43,11 @@ from main import (
     C_ACCENT_BLUE,
     C_WHITE,
     C_ROW_ALT,
+    C_VLAN_DEAD,
     RGB_WHITE,
     RGB_DARK_TEXT,
     RGB_AMBER,
+    RGB_DEAD_TEXT,
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -87,8 +89,11 @@ def _iface(name: str, **kwargs) -> dict:
         "stp_portfast":      False,
         "stp_rootguard":     False,
         "stp_bpduguard":     False,
-        "port_security":     False,
-        "port_security_max": "",
+        "port_security":           False,
+        "port_security_max":       "",
+        "port_security_violation": "",
+        "port_security_macs":      [],
+        "port_security_sticky":    False,
     }
     defaults.update(kwargs)
     return defaults
@@ -439,6 +444,37 @@ class TestWriteCell:
         cell = doc.add_table(rows=1, cols=1).cell(0, 0)
         _write_cell(cell, "Тест Кирилиця")
         assert cell.paragraphs[0].text == "Тест Кирилиця"
+
+    def test_multiline_creates_multiple_runs(self):
+        doc = _doc()
+        cell = doc.add_table(rows=1, cols=1).cell(0, 0)
+        _write_cell(cell, "PortSec max:3\nviolation:restrict\nMAC:aabb.cc00.1122")
+        assert len(cell.paragraphs[0].runs) == 3
+
+    def test_multiline_all_parts_present(self):
+        doc = _doc()
+        cell = doc.add_table(rows=1, cols=1).cell(0, 0)
+        _write_cell(cell, "line1\nline2\nline3")
+        # python-docx appends '\n' to run text for w:br elements
+        texts = [r.text.rstrip("\n") for r in cell.paragraphs[0].runs]
+        assert texts == ["line1", "line2", "line3"]
+
+    def test_multiline_br_element_between_runs(self):
+        from docx.oxml.ns import qn as _qn
+        doc = _doc()
+        cell = doc.add_table(rows=1, cols=1).cell(0, 0)
+        _write_cell(cell, "first\nsecond")
+        first_run = cell.paragraphs[0].runs[0]._r
+        br = first_run.find(_qn("w:br"))
+        assert br is not None
+
+    def test_single_line_no_br(self):
+        from docx.oxml.ns import qn as _qn
+        doc = _doc()
+        cell = doc.add_table(rows=1, cols=1).cell(0, 0)
+        _write_cell(cell, "no newline here")
+        run = cell.paragraphs[0].runs[0]._r
+        assert run.find(_qn("w:br")) is None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -805,9 +841,9 @@ def _all_cell_texts(table) -> list[str]:
 #  _add_vlan_table
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _vlans(*pairs):
+def _vlans(*pairs, used=True):
     """Helper: create list of vlan dicts from (id, name) pairs."""
-    return [{"id": vid, "name": name} for vid, name in pairs]
+    return [{"id": vid, "name": name, "used": used} for vid, name in pairs]
 
 
 class TestAddVlanTable:
@@ -826,10 +862,10 @@ class TestAddVlanTable:
         _add_vlan_table(doc, _vlans(("10", "SERVERS")))
         assert len(doc.tables) == 1
 
-    def test_table_has_2_columns(self):
+    def test_table_has_3_columns(self):
         doc = _doc()
         _add_vlan_table(doc, _vlans(("10", "SERVERS")))
-        assert len(doc.tables[0].columns) == 2
+        assert len(doc.tables[0].columns) == 3
 
     def test_header_first_column_vlan(self):
         doc = _doc()
@@ -842,6 +878,12 @@ class TestAddVlanTable:
         _add_vlan_table(doc, _vlans(("10", "SERVERS")))
         hdr_texts = [c.paragraphs[0].text for c in doc.tables[0].rows[0].cells]
         assert hdr_texts[1] == "НАЗВА"
+
+    def test_header_third_column_status(self):
+        doc = _doc()
+        _add_vlan_table(doc, _vlans(("10", "SERVERS")))
+        hdr_texts = [c.paragraphs[0].text for c in doc.tables[0].rows[0].cells]
+        assert hdr_texts[2] == "СТАТУС"
 
     def test_header_accent_blue_background(self):
         doc = _doc()
@@ -883,6 +925,36 @@ class TestAddVlanTable:
         assert bg0 in (C_WHITE, C_ROW_ALT)
         assert bg1 in (C_WHITE, C_ROW_ALT)
         assert bg0 != bg1
+
+    def test_dead_vlan_has_grey_background(self):
+        doc = _doc()
+        _add_vlan_table(doc, [{"id": "10", "name": "DEAD", "used": False}])
+        bg = doc.tables[0].rows[1].cells[0]._tc.tcPr.find(qn("w:shd")).get(qn("w:fill"))
+        assert bg == C_VLAN_DEAD
+
+    def test_used_vlan_has_normal_background(self):
+        doc = _doc()
+        _add_vlan_table(doc, [{"id": "10", "name": "USED", "used": True}])
+        bg = doc.tables[0].rows[1].cells[0]._tc.tcPr.find(qn("w:shd")).get(qn("w:fill"))
+        assert bg in (C_WHITE, C_ROW_ALT)
+
+    def test_dead_vlan_status_cell_dash(self):
+        doc = _doc()
+        _add_vlan_table(doc, [{"id": "10", "name": "X", "used": False}])
+        status = doc.tables[0].rows[1].cells[2].paragraphs[0].text
+        assert status == "—"
+
+    def test_used_vlan_status_cell_active(self):
+        doc = _doc()
+        _add_vlan_table(doc, [{"id": "10", "name": "X", "used": True}])
+        status = doc.tables[0].rows[1].cells[2].paragraphs[0].text
+        assert "активний" in status
+
+    def test_vlan_without_name_shows_dash(self):
+        doc = _doc()
+        _add_vlan_table(doc, [{"id": "10", "name": "", "used": False}])
+        name_text = doc.tables[0].rows[1].cells[1].paragraphs[0].text
+        assert name_text == "—"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

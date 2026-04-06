@@ -156,6 +156,7 @@ class TestParseShowrunInterfaces:
             "shutdown", "notes", "iface_class",
             "voice_vlan", "stp_portfast", "stp_rootguard",
             "stp_bpduguard", "port_security", "port_security_max",
+            "port_security_violation", "port_security_macs", "port_security_sticky",
         ):
             assert field in iface, f"Missing key: {field}"
 
@@ -907,21 +908,23 @@ class TestParseShowrunPortSecurity:
         """)
         assert "PortSec" in r["interfaces"][0]["notes"]
 
-    def test_port_security_max_notes_secmax(self):
+    def test_port_security_max_notes(self):
         r = _p("""
             interface GigabitEthernet1/0/1
              switchport port-security maximum 5
         """)
-        assert "SecMax:5" in r["interfaces"][0]["notes"]
+        notes = r["interfaces"][0]["notes"]
+        assert "PortSec" in notes
+        assert "max:5" in notes
 
-    def test_secmax_not_portsec_when_max_present(self):
+    def test_port_security_max_always_includes_portsec(self):
         r = _p("""
             interface GigabitEthernet1/0/1
              switchport port-security maximum 2
         """)
         notes = r["interfaces"][0]["notes"]
-        assert "SecMax:2" in notes
-        assert "PortSec" not in notes
+        assert "PortSec" in notes
+        assert "max:2" in notes
 
     def test_port_security_notes_before_shutdown(self):
         r = _p("""
@@ -931,6 +934,191 @@ class TestParseShowrunPortSecurity:
         """)
         notes = r["interfaces"][0]["notes"]
         assert notes.index("PortSec") < notes.index("shutdown")
+
+    # ── violation mode ────────────────────────────────────────────────────────
+
+    def test_port_security_violation_default_empty(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+        """)
+        assert r["interfaces"][0]["port_security_violation"] == ""
+
+    def test_port_security_violation_restrict(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             switchport port-security violation restrict
+        """)
+        iface = r["interfaces"][0]
+        assert iface["port_security_violation"] == "restrict"
+        assert iface["port_security"] is True
+
+    def test_port_security_violation_protect(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             switchport port-security violation protect
+        """)
+        assert r["interfaces"][0]["port_security_violation"] == "protect"
+
+    def test_port_security_violation_shutdown(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             switchport port-security violation shutdown
+        """)
+        assert r["interfaces"][0]["port_security_violation"] == "shutdown"
+
+    def test_port_security_violation_in_notes(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             switchport port-security violation restrict
+        """)
+        notes = r["interfaces"][0]["notes"]
+        assert "violation:restrict" in notes
+
+    # ── static MACs ───────────────────────────────────────────────────────────
+
+    def test_port_security_macs_default_empty(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+        """)
+        assert r["interfaces"][0]["port_security_macs"] == []
+
+    def test_port_security_single_static_mac(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             switchport port-security mac-address aabb.cc00.1122
+        """)
+        iface = r["interfaces"][0]
+        assert iface["port_security"] is True
+        assert iface["port_security_macs"] == ["aabb.cc00.1122"]
+
+    def test_port_security_multiple_static_macs(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             switchport port-security mac-address aabb.cc00.1122
+             switchport port-security mac-address aabb.cc00.3344
+        """)
+        assert r["interfaces"][0]["port_security_macs"] == [
+            "aabb.cc00.1122", "aabb.cc00.3344"
+        ]
+
+    def test_port_security_static_mac_in_notes(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             switchport port-security mac-address aabb.cc00.1122
+        """)
+        notes = r["interfaces"][0]["notes"]
+        assert "MAC:aabb.cc00.1122" in notes
+
+    def test_port_security_each_mac_on_own_line(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             switchport port-security mac-address aabb.cc00.1122
+             switchport port-security mac-address aabb.cc00.3344
+        """)
+        notes = r["interfaces"][0]["notes"]
+        lines = notes.split("\n")
+        assert any("MAC:aabb.cc00.1122" in l for l in lines)
+        assert any("MAC:aabb.cc00.3344" in l for l in lines)
+
+    # ── sticky ────────────────────────────────────────────────────────────────
+
+    def test_port_security_sticky_default_false(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+        """)
+        assert r["interfaces"][0]["port_security_sticky"] is False
+
+    def test_port_security_sticky_set(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             switchport port-security mac-address sticky
+        """)
+        iface = r["interfaces"][0]
+        assert iface["port_security_sticky"] is True
+        assert iface["port_security"] is True
+
+    def test_port_security_sticky_in_notes(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             switchport port-security mac-address sticky
+        """)
+        assert "sticky" in r["interfaces"][0]["notes"]
+
+    def test_port_security_sticky_with_mac(self):
+        """sticky + explicit MAC address on same line."""
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             switchport port-security mac-address sticky aabb.cc00.5566
+        """)
+        iface = r["interfaces"][0]
+        assert iface["port_security_sticky"] is True
+        assert "aabb.cc00.5566" in iface["port_security_macs"]
+
+    def test_port_security_sticky_mac_not_in_mac_address_list_when_bare(self):
+        """bare 'sticky' keyword alone → no MACs added to list."""
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             switchport port-security mac-address sticky
+        """)
+        assert r["interfaces"][0]["port_security_macs"] == []
+
+    # ── combined ──────────────────────────────────────────────────────────────
+
+    def test_port_security_full_combination(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             switchport port-security
+             switchport port-security maximum 3
+             switchport port-security violation restrict
+             switchport port-security mac-address aabb.cc00.1122
+             switchport port-security mac-address aabb.cc00.3344
+        """)
+        iface = r["interfaces"][0]
+        assert iface["port_security"] is True
+        assert iface["port_security_max"] == "3"
+        assert iface["port_security_violation"] == "restrict"
+        assert iface["port_security_macs"] == ["aabb.cc00.1122", "aabb.cc00.3344"]
+        notes = iface["notes"]
+        assert "PortSec" in notes
+        assert "max:3" in notes
+        assert "violation:restrict" in notes
+        assert "MAC:aabb.cc00.1122" in notes
+        assert "MAC:aabb.cc00.3344" in notes
+
+
+# ── notes separator ──────────────────────────────────────────────────────────
+
+class TestParseShowrunNotesSeparator:
+
+    def test_notes_use_newline_separator(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             switchport voice vlan 10
+             spanning-tree portfast
+        """)
+        notes = r["interfaces"][0]["notes"]
+        assert "\n" in notes
+        assert "Voice:10" in notes
+        assert "PortFast" in notes
+
+    def test_single_note_no_newline(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             spanning-tree portfast
+        """)
+        assert "\n" not in r["interfaces"][0]["notes"]
+
+    def test_mac_entries_each_on_own_line(self):
+        r = _p("""
+            interface GigabitEthernet1/0/1
+             switchport port-security mac-address 1111.2222.3333
+             switchport port-security mac-address 4444.5555.6666
+             shutdown
+        """)
+        lines = r["interfaces"][0]["notes"].split("\n")
+        assert lines[-1] == "shutdown"
+        assert any("MAC:1111.2222.3333" in l for l in lines)
+        assert any("MAC:4444.5555.6666" in l for l in lines)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -956,7 +1144,8 @@ class TestParseShowrunVlanDefinitions:
              name SERVERS
         """)
         assert len(r["vlans"]) == 1
-        assert r["vlans"][0] == {"id": "10", "name": "SERVERS"}
+        assert r["vlans"][0]["id"] == "10"
+        assert r["vlans"][0]["name"] == "SERVERS"
 
     def test_multiple_vlans(self):
         r = _p("""
@@ -969,14 +1158,18 @@ class TestParseShowrunVlanDefinitions:
         assert "10" in ids
         assert "20" in ids
 
-    def test_vlan_without_name_skipped(self):
+    def test_vlan_without_name_included(self):
         r = _p("""
             vlan 10
             vlan 20
              name MGMT
         """)
-        assert len(r["vlans"]) == 1
-        assert r["vlans"][0]["id"] == "20"
+        ids = [v["id"] for v in r["vlans"]]
+        assert "10" in ids
+        assert "20" in ids
+        names = {v["id"]: v["name"] for v in r["vlans"]}
+        assert names["10"] == ""
+        assert names["20"] == "MGMT"
 
     def test_vlan_range_skipped(self):
         r = _p("""
@@ -1007,6 +1200,123 @@ class TestParseShowrunVlanDefinitions:
         """)
         assert r["vlans"][0]["name"] == "MGMT-VLAN"
 
+    def test_vlans_sorted_by_numeric_id(self):
+        r = _p("""
+            vlan 30
+             name C
+            vlan 10
+             name A
+            vlan 20
+             name B
+        """)
+        ids = [v["id"] for v in r["vlans"]]
+        assert ids == ["10", "20", "30"]
+
+    # ── used / dead field ─────────────────────────────────────────────────────
+
+    def test_vlan_used_field_present(self):
+        r = _p("""
+            vlan 10
+             name TEST
+        """)
+        assert "used" in r["vlans"][0]
+
+    def test_vlan_not_used_when_no_interfaces(self):
+        r = _p("""
+            vlan 10
+             name TEST
+        """)
+        assert r["vlans"][0]["used"] is False
+
+    def test_vlan_used_via_access_port(self):
+        r = _p("""
+            vlan 10
+             name SERVERS
+            interface GigabitEthernet1/0/1
+             switchport mode access
+             switchport access vlan 10
+        """)
+        v = next(v for v in r["vlans"] if v["id"] == "10")
+        assert v["used"] is True
+
+    def test_vlan_dead_when_not_referenced(self):
+        r = _p("""
+            vlan 10
+             name USED
+            vlan 20
+             name DEAD
+            interface GigabitEthernet1/0/1
+             switchport mode access
+             switchport access vlan 10
+        """)
+        v20 = next(v for v in r["vlans"] if v["id"] == "20")
+        assert v20["used"] is False
+
+    def test_vlan_used_via_native_vlan(self):
+        r = _p("""
+            vlan 99
+             name NATIVE
+            interface GigabitEthernet1/0/1
+             switchport mode trunk
+             switchport trunk native vlan 99
+        """)
+        v = next(v for v in r["vlans"] if v["id"] == "99")
+        assert v["used"] is True
+
+    def test_vlan_used_via_voice_vlan(self):
+        r = _p("""
+            vlan 50
+             name VOICE
+            interface GigabitEthernet1/0/1
+             switchport voice vlan 50
+        """)
+        v = next(v for v in r["vlans"] if v["id"] == "50")
+        assert v["used"] is True
+
+    def test_vlan_used_via_trunk_range(self):
+        r = _p("""
+            vlan 15
+             name IN-RANGE
+            interface GigabitEthernet1/0/1
+             switchport mode trunk
+             switchport trunk allowed vlan 10-20
+        """)
+        v = next(v for v in r["vlans"] if v["id"] == "15")
+        assert v["used"] is True
+
+    def test_vlan_dead_outside_trunk_range(self):
+        r = _p("""
+            vlan 25
+             name OUTSIDE
+            interface GigabitEthernet1/0/1
+             switchport mode trunk
+             switchport trunk allowed vlan 10-20
+        """)
+        v = next(v for v in r["vlans"] if v["id"] == "25")
+        assert v["used"] is False
+
+    def test_vlan_used_trunk_all(self):
+        r = _p("""
+            vlan 777
+             name ANY
+            interface GigabitEthernet1/0/1
+             switchport mode trunk
+             switchport trunk allowed vlan all
+        """)
+        v = next(v for v in r["vlans"] if v["id"] == "777")
+        assert v["used"] is True
+
+    def test_vlan_without_name_included_with_used_field(self):
+        r = _p("""
+            vlan 10
+            interface GigabitEthernet1/0/1
+             switchport mode access
+             switchport access vlan 10
+        """)
+        assert len(r["vlans"]) == 1
+        assert r["vlans"][0]["name"] == ""
+        assert r["vlans"][0]["used"] is True
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Integration: full notes ordering
@@ -1027,7 +1337,7 @@ class TestParseShowrunIntegrationNotes:
              shutdown
         """)
         notes = r["interfaces"][0]["notes"]
-        order = ["Po2 member", "Voice:10", "PortFast", "RootGuard", "BPDUGuard", "SecMax:3", "shutdown"]
+        order = ["Po2 member", "Voice:10", "PortFast", "RootGuard", "BPDUGuard", "PortSec", "shutdown"]
         positions = [notes.index(tok) for tok in order]
         assert positions == sorted(positions), f"Wrong order in: {notes}"
 

@@ -27,6 +27,7 @@ C_LIGHT_BLUE  = "E8EFF8"
 C_ROW_ALT     = "F5F8FC"
 C_PO_ROW      = "EEF2FF"
 C_VLAN_ROW    = "F0FDF4"
+C_VLAN_DEAD   = "ECECEC"
 C_BORDER      = "CBD5E1"
 C_WHITE       = "FFFFFF"
 
@@ -34,6 +35,7 @@ RGB_WHITE      = RGBColor(0xFF, 0xFF, 0xFF)
 RGB_DARK_TEXT  = RGBColor(0x1E, 0x29, 0x3B)
 RGB_GREY_LABEL = RGBColor(0x94, 0xA3, 0xB8)
 RGB_AMBER      = RGBColor(0xB4, 0x53, 0x09)
+RGB_DEAD_TEXT  = RGBColor(0xB0, 0xB0, 0xB0)
 
 # A4 portrait with 14 mm margins → 182 mm usable width
 USABLE_MM = 182.0
@@ -80,6 +82,39 @@ def short_iface(name: str) -> str:
     return name
 
 
+def _collect_used_vlans(interfaces: list) -> tuple:
+    """Return (used_ids: set[str], all_used: bool).
+    used_ids — VLAN IDs referenced on any interface.
+    all_used  — True if any trunk allows 'all' or an unexpandable wide range.
+    """
+    used = set()
+    all_used = False
+    for iface in interfaces:
+        for field in ("access_vlan", "native_vlan", "voice_vlan"):
+            val = iface.get(field, "")
+            if val:
+                used.add(val)
+        trunk = iface.get("trunk_vlans", "")
+        if trunk:
+            for part in trunk.split(","):
+                part = part.strip()
+                if not part or part.lower() == "none":
+                    continue
+                if part.lower() == "all":
+                    all_used = True
+                    continue
+                m = re.match(r"^(\d+)-(\d+)$", part)
+                if m:
+                    lo, hi = int(m.group(1)), int(m.group(2))
+                    if hi - lo <= 1000:
+                        used.update(str(i) for i in range(lo, hi + 1))
+                    else:
+                        all_used = True
+                elif re.match(r"^\d+$", part):
+                    used.add(part)
+    return used, all_used
+
+
 def parse_showrun(text: str) -> dict:
     result = {"hostname": "", "mgmt_ip": "", "interfaces": []}
 
@@ -110,12 +145,15 @@ def parse_showrun(text: str) -> dict:
             "shutdown":        False,
             "notes":           "",
             "iface_class":     "physical",
-            "voice_vlan":        "",
-            "stp_portfast":      False,
-            "stp_rootguard":     False,
-            "stp_bpduguard":     False,
-            "port_security":     False,
-            "port_security_max": "",
+            "voice_vlan":              "",
+            "stp_portfast":            False,
+            "stp_rootguard":           False,
+            "stp_bpduguard":           False,
+            "port_security":           False,
+            "port_security_max":       "",
+            "port_security_violation": "",
+            "port_security_macs":      [],
+            "port_security_sticky":    False,
         }
 
         for line in lines[1:]:
@@ -172,19 +210,41 @@ def parse_showrun(text: str) -> dict:
                 iface["port_security_max"] = re.search(r"switchport port-security maximum (\d+)", line).group(1)
                 iface["port_security"] = True
 
+            elif re.match(r"switchport port-security violation (\S+)", line):
+                iface["port_security_violation"] = re.search(r"switchport port-security violation (\S+)", line).group(1)
+                iface["port_security"] = True
+
+            elif re.match(r"switchport port-security mac-address sticky", line):
+                iface["port_security_sticky"] = True
+                iface["port_security"] = True
+                m_sticky = re.search(r"switchport port-security mac-address sticky\s+(\S+)", line)
+                if m_sticky:
+                    iface["port_security_macs"].append(m_sticky.group(1))
+
+            elif re.match(r"switchport port-security mac-address (\S+)", line):
+                mac = re.search(r"switchport port-security mac-address (\S+)", line).group(1)
+                iface["port_security_macs"].append(mac)
+                iface["port_security"] = True
+
             elif line == "switchport port-security":
                 iface["port_security"] = True
 
-        # Build notes: Po member → Voice:X → PortFast → RootGuard → BPDUGuard → SecMax/PortSec → shutdown
+        # Build notes: Po member → Voice:X → PortFast → RootGuard → BPDUGuard → PortSec … → shutdown
         notes_parts = [iface["notes"]] if iface["notes"] else []
-        if iface["voice_vlan"]:        notes_parts.append(f"Voice:{iface['voice_vlan']}")
-        if iface["stp_portfast"]:      notes_parts.append("PortFast")
-        if iface["stp_rootguard"]:     notes_parts.append("RootGuard")
-        if iface["stp_bpduguard"]:     notes_parts.append("BPDUGuard")
-        if iface["port_security_max"]: notes_parts.append(f"SecMax:{iface['port_security_max']}")
-        elif iface["port_security"]:   notes_parts.append("PortSec")
-        if iface["shutdown"]:          notes_parts.append("shutdown")
-        iface["notes"] = " ".join(notes_parts)
+        if iface["voice_vlan"]:   notes_parts.append(f"Voice:{iface['voice_vlan']}")
+        if iface["stp_portfast"]: notes_parts.append("PortFast")
+        if iface["stp_rootguard"]:notes_parts.append("RootGuard")
+        if iface["stp_bpduguard"]:notes_parts.append("BPDUGuard")
+        if iface["port_security"]:
+            ps_parts = ["PortSec"]
+            if iface["port_security_max"]:       ps_parts.append(f"max:{iface['port_security_max']}")
+            if iface["port_security_violation"]: ps_parts.append(f"violation:{iface['port_security_violation']}")
+            if iface["port_security_sticky"]:    ps_parts.append("sticky")
+            notes_parts.append(" ".join(ps_parts))
+            for mac in iface["port_security_macs"]:
+                notes_parts.append(f"MAC:{mac}")
+        if iface["shutdown"]:     notes_parts.append("shutdown")
+        iface["notes"] = "\n".join(notes_parts)
 
         # Mode fallback
         if not iface["mode"]:
@@ -219,8 +279,13 @@ def parse_showrun(text: str) -> dict:
             if vl.strip().startswith("name "):
                 vlan_name = vl.strip()[len("name "):].strip()
                 break
-        if vlan_name:
-            result["vlans"].append({"id": m_vid.group(1), "name": vlan_name})
+        result["vlans"].append({"id": m_vid.group(1), "name": vlan_name})
+
+    # Mark each VLAN as used (referenced on any port) or dead
+    used_ids, trunk_all = _collect_used_vlans(result["interfaces"])
+    for vlan in result["vlans"]:
+        vlan["used"] = trunk_all or vlan["id"] in used_ids
+    result["vlans"].sort(key=lambda v: int(v["id"]))
 
     # Resolve MGMT IP: prefer SSH source-interface, fallback to first IP found
     ssh_src = result.get("ssh_source_iface", "")
@@ -409,18 +474,24 @@ def _set_run_font(run, font_name: str = "Calibri"):
 def _write_cell(cell, text: str, bold: bool = False,
                 color: RGBColor = None, font_size: float = 7,
                 align=WD_ALIGN_PARAGRAPH.LEFT):
-    """Write text into the first paragraph of a cell with full styling."""
+    """Write text into the first paragraph of a cell with full styling.
+    '\\n' in text produces in-cell line breaks (w:br)."""
     para = cell.paragraphs[0]
     para.clear()
     para.paragraph_format.space_before = Pt(0)
     para.paragraph_format.space_after  = Pt(0)
     para.alignment = align
-    run = para.add_run(text or "")
-    run.bold = bold
-    run.font.size = Pt(font_size)
-    if color:
-        run.font.color.rgb = color
-    _set_run_font(run)
+    parts = (text or "").split("\n")
+    for i, part in enumerate(parts):
+        run = para.add_run(part)
+        run.bold = bold
+        run.font.size = Pt(font_size)
+        if color:
+            run.font.color.rgb = color
+        _set_run_font(run)
+        if i < len(parts) - 1:
+            br = OxmlElement("w:br")
+            run._r.append(br)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -596,14 +667,15 @@ def _add_interface_table(doc, interfaces: list, logical: bool = False):
 
 
 def _add_vlan_table(doc, vlans: list):
-    """Two-column VLAN definitions table: VLAN ID | НАЗВА."""
+    """Three-column VLAN table: VLAN ID | НАЗВА | СТАТУС (активний / мертвий)."""
     if not vlans:
         return
 
-    COL_W_MM = [22, 160]
-    COL_HDR  = ["VLAN", "НАЗВА"]
+    # 22 + 130 + 30 = 182 mm
+    COL_W_MM = [22, 130, 30]
+    COL_HDR  = ["VLAN", "НАЗВА", "СТАТУС"]
 
-    tbl = doc.add_table(rows=1, cols=2)
+    tbl = doc.add_table(rows=1, cols=3)
     tbl.alignment = WD_TABLE_ALIGNMENT.LEFT
     set_table_fixed_layout(tbl)
     set_table_width(tbl, USABLE_MM)
@@ -619,11 +691,19 @@ def _add_vlan_table(doc, vlans: list):
         c.width = Mm(w)
         set_cell_bg(c, C_ACCENT_BLUE)
         _write_cell(c, h, bold=True, color=RGB_WHITE, font_size=10,
-                    align=WD_ALIGN_PARAGRAPH.CENTER if ci == 0
-                    else WD_ALIGN_PARAGRAPH.LEFT)
+                    align=WD_ALIGN_PARAGRAPH.CENTER)
 
     for ri, vlan in enumerate(vlans):
-        bg = C_WHITE if ri % 2 == 0 else C_ROW_ALT
+        is_used = vlan.get("used", True)
+        if is_used:
+            bg         = C_WHITE if ri % 2 == 0 else C_ROW_ALT
+            text_color = RGB_DARK_TEXT
+            status     = "активний"
+        else:
+            bg         = C_VLAN_DEAD
+            text_color = RGB_DEAD_TEXT
+            status     = "—"
+
         row = tbl.add_row()
         set_row_min_height(row, 360)
 
@@ -631,15 +711,22 @@ def _add_vlan_table(doc, vlans: list):
         c0.width = Mm(COL_W_MM[0])
         c0.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
         set_cell_bg(c0, bg)
-        _write_cell(c0, str(vlan["id"]), bold=True, color=RGB_DARK_TEXT,
+        _write_cell(c0, str(vlan["id"]), bold=True, color=text_color,
                     font_size=10, align=WD_ALIGN_PARAGRAPH.CENTER)
 
         c1 = row.cells[1]
         c1.width = Mm(COL_W_MM[1])
         c1.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
         set_cell_bg(c1, bg)
-        _write_cell(c1, vlan["name"], color=RGB_DARK_TEXT,
+        _write_cell(c1, vlan["name"] or "—", color=text_color,
                     font_size=10, align=WD_ALIGN_PARAGRAPH.LEFT)
+
+        c2 = row.cells[2]
+        c2.width = Mm(COL_W_MM[2])
+        c2.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+        set_cell_bg(c2, bg)
+        _write_cell(c2, status, color=text_color,
+                    font_size=10, align=WD_ALIGN_PARAGRAPH.CENTER)
 
     sp = doc.add_paragraph()
     sp.paragraph_format.space_before = Pt(0)
