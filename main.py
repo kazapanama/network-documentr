@@ -831,6 +831,10 @@ class App(_BASE):
         self.update_idletasks()
         self.geometry(f"560x{self.winfo_reqheight()}")
         self.after(50, self._dark_titlebar)
+        # Auto-load files passed as CLI arguments (e.g. drag-onto-icon on Windows)
+        argv_files = [p for p in sys.argv[1:] if os.path.isfile(p)]
+        if argv_files:
+            self.after(100, lambda: self._load_files(argv_files))
 
     def _dark_titlebar(self):
         """Dark title bar on Windows 10 1903+ / Windows 11."""
