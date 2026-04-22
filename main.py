@@ -642,8 +642,10 @@ def _add_interface_table(doc, interfaces: list, logical: bool = False):
             ip         = iface["ip_address"].split()[0] if iface["ip_address"] else "—"
             cells_data = [short, desc, mode, ip, notes]
         else:
-            acc_nat    = iface["access_vlan"] or iface["native_vlan"] or "—"
-            trunk      = iface["trunk_vlans"] or "—"
+            acc_nat = iface["access_vlan"] or "—"
+            trunk_base = iface["trunk_vlans"] or "—"
+            trunk = (trunk_base + f"\nnative: {iface['native_vlan']}"
+                     if iface["native_vlan"] else trunk_base)
             cells_data = [short, desc, mode, acc_nat, trunk, notes]
 
         row = tbl.add_row()
