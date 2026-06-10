@@ -1,6 +1,6 @@
 # network-documentr
 
-Генератор DOCX-документації для Cisco-обладнання на основі виводу `show running-config`.
+Генератор DOCX-документації для Cisco-обладнання (`show running-config`) та Fortinet — FortiGate і standalone FortiSwitch (`show full-configuration`). Вендор визначається автоматично.
 
 Завантажуєте текстовий файл конфігурації — отримуєте готовий Word-документ з таблицями всіх інтерфейсів, IP-адресами і VLAN-інформацією.
 
@@ -15,6 +15,8 @@
 - Позначає `shutdown`-порти окремим кольором
 - Автоматично визначає членів Port-channel (`channel-group`)
 - Підтримує кодування UTF-8 / CP1251 / Latin-1
+- **Автовизначення моделі та серійного номера** — якщо до файлу конфігурації доклеєно вивід `show version` / `show inventory` (Cisco) чи `get system status` (Fortinet)
+- **Fortinet**: FortiGate (`config system interface` — physical / vlan / aggregate / loopback / tunnel) і standalone FortiSwitch (`config switch physical-port|interface|trunk|vlan`)
 - Розпізнає Voice VLAN, STP PortFast / RootGuard / BPDUGuard, Port Security — виводить у ПРИМІТКУ
 - Генерує таблицю **VLAN DEFINITIONS** з назвами VLAN (`vlan N` + `name`)
 - **Drag & drop** конфігураційного файлу на кнопку "Завантажити" (потребує `tkinterdnd2`)
@@ -81,14 +83,49 @@ python main.py
 
 ## Використання
 
-1. Натисніть **Завантажити конфігурації** і оберіть один або кілька `.txt`-файлів з виводом `show running-config`
+1. Натисніть **Завантажити конфігурації** і оберіть один або кілька файлів з виводом `show running-config` (Cisco) чи `show full-configuration` (Fortinet)
    — або перетягніть файл(и) прямо на кнопку (потребує `tkinterdnd2`)
-2. Заповніть поля **Модель / Вендор** і **Серійний номер** (необов'язково)
+2. Перевірте поля **Модель / Вендор** і **Серійний номер** — вони заповнюються автоматично, якщо у файлі є вивід `show version` / `show inventory` / `get system status` (див. нижче), інакше впишіть вручну (необов'язково)
 3. Натисніть **Створити DOCX** (кнопка з'являється після завантаження конфігурацій)
    - Один файл → вибір імені та шляху збереження
    - Кілька файлів → вибір директорії, документи зберігаються як `<hostname>_doc.docx`
 
-MGMT IP підхоплюється автоматично (з `ip ssh source-interface` або першого `ip address`).
+MGMT IP підхоплюється автоматично:
+- **Cisco** — з `ip ssh source-interface`, інакше перший `ip address`
+- **Fortinet** — інтерфейс `mgmt`/`mgmt1`/`management`, інакше інтерфейс з `allowaccess` ssh/https, інакше перший IP
+
+---
+
+## Автовизначення моделі та серійного номера
+
+Поля **Модель / Вендор** і **Серійний номер** заповнюються автоматично, якщо у тому ж текстовому файлі, що й конфігурація, є вивід додаткових команд. Просто виконайте їх у тій самій сесії терміналу і збережіть увесь вивід в один файл.
+
+### Cisco
+
+```
+show running-config
+show inventory          ← модель (PID) + серійний номер (SN)
+show version            ← запасний варіант
+```
+
+Пріоритет пошуку:
+
+1. `show inventory` — перший рядок `PID: … , SN: …` (шасі / головний юніт стека)
+2. `show version` — `Model number : …`
+3. `show version` — `System serial number : …`
+4. `show version` — `Processor board ID …` (старі платформи, напр. 3750)
+
+### Fortinet
+
+```
+show full-configuration
+get system status       ← серійний номер (рядок Serial-Number:)
+```
+
+- **Модель** береться прямо з заголовка конфігурації — рядок `#config-version=FGT60E-7.2.5-…` (`FGT60E`), окрема команда не потрібна
+- **Серійний номер** у `show full-configuration` відсутній — для нього доклейте вивід `get system status` (рядок `Serial-Number: FGT60E4Q16012345`)
+
+Якщо автовизначення нічого не знайшло, поля можна заповнити вручну — або лишити порожніми (у документі буде «—»).
 
 ---
 
@@ -99,7 +136,7 @@ pip install pytest
 python -m pytest tests/ -v
 ```
 
-252 тести покривають парсер (`test_parser.py`) та DOCX-білдер (`test_docx_builder.py`).
+364 тести покривають Cisco-парсер (`test_parser.py`), Fortinet-парсер (`test_fortinet.py`) та DOCX-білдер (`test_docx_builder.py`).
 
 ---
 
@@ -131,7 +168,8 @@ network-documentr/
 ├── requirements.txt           # python-docx, lxml, pyinstaller
 ├── network-documentr.spec     # PyInstaller spec
 ├── tests/
-│   ├── test_parser.py         # Юніт-тести парсера
+│   ├── test_parser.py         # Юніт-тести Cisco-парсера
+│   ├── test_fortinet.py       # Юніт-тести Fortinet-парсера
 │   └── test_docx_builder.py   # Тести DOCX-білдера
 ├── dist/
 │   └── network-documentr.exe  # Готовий бінарник

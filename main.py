@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-network-documentr — Cisco 'show running-config' → DOCX generator
+network-documentr — Cisco 'show running-config' / Fortinet 'show full-configuration'
+→ DOCX generator
 """
 
 import re
@@ -82,6 +83,32 @@ def short_iface(name: str) -> str:
     return name
 
 
+def _blank_iface(name: str) -> dict:
+    """Interface record with every field the DOCX builder expects."""
+    return {
+        "name":            name,
+        "description":     "",
+        "mode":            "",
+        "access_vlan":     "",
+        "native_vlan":     "",
+        "trunk_vlans":     "",
+        "ip_address":      "",
+        "shutdown":        False,
+        "notes":           "",
+        "iface_class":     "physical",
+        "row_kind":        "",            # "" | "po" | "vlan" | "lo" — colour/counter hint
+        "voice_vlan":              "",
+        "stp_portfast":            False,
+        "stp_rootguard":           False,
+        "stp_bpduguard":           False,
+        "port_security":           False,
+        "port_security_max":       "",
+        "port_security_violation": "",
+        "port_security_macs":      [],
+        "port_security_sticky":    False,
+    }
+
+
 def _collect_used_vlans(interfaces: list) -> tuple:
     """Return (used_ids: set[str], all_used: bool).
     used_ids — VLAN IDs referenced on any interface.
@@ -134,27 +161,7 @@ def parse_showrun(text: str) -> dict:
         lines = block.strip().splitlines()
         iface_name = lines[0].split(None, 1)[1].strip()
 
-        iface = {
-            "name":            iface_name,
-            "description":     "",
-            "mode":            "",
-            "access_vlan":     "",
-            "native_vlan":     "",
-            "trunk_vlans":     "",
-            "ip_address":      "",
-            "shutdown":        False,
-            "notes":           "",
-            "iface_class":     "physical",
-            "voice_vlan":              "",
-            "stp_portfast":            False,
-            "stp_rootguard":           False,
-            "stp_bpduguard":           False,
-            "port_security":           False,
-            "port_security_max":       "",
-            "port_security_violation": "",
-            "port_security_macs":      [],
-            "port_security_sticky":    False,
-        }
+        iface = _blank_iface(iface_name)
 
         for line in lines[1:]:
             line = line.strip()
@@ -262,6 +269,13 @@ def parse_showrun(text: str) -> dict:
         else:
             iface["iface_class"] = "physical"
 
+        if iface_name.lower().startswith("port-channel"):
+            iface["row_kind"] = "po"
+        elif iface_name.startswith("Vlan"):
+            iface["row_kind"] = "vlan"
+        elif iface_name.startswith("Loopback"):
+            iface["row_kind"] = "lo"
+
         result["interfaces"].append(iface)
 
     # Parse VLAN definitions (single-VID blocks only; skip ranges, "vlan database")
@@ -302,6 +316,340 @@ def parse_showrun(text: str) -> dict:
     return result
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+#  FORTINET PARSER (FortiGate / FortiSwitch — 'show full-configuration')
+# ═════════════════════════════════════════════════════════════════════════════
+
+def detect_vendor(text: str) -> str:
+    """Return 'fortinet' for FortiOS/FortiSwitchOS configs, otherwise 'cisco'."""
+    if re.search(r"^#config-version=", text, re.MULTILINE):
+        return "fortinet"
+    if re.search(r"^\s*config system (global|interface)\s*$", text, re.MULTILINE):
+        return "fortinet"
+    if re.search(r"^\s*config switch (interface|physical-port)\s*$", text, re.MULTILINE):
+        return "fortinet"
+    return "cisco"
+
+
+def _forti_unquote(val: str) -> str:
+    val = val.strip()
+    if len(val) >= 2 and val[0] == '"' and val[-1] == '"':
+        val = val[1:-1]
+    return val
+
+
+def _forti_values(val: str) -> list:
+    """'\"port51\" \"port52\"' → ['port51', 'port52']; unquoted → split on spaces."""
+    vals = re.findall(r'"([^"]*)"', val)
+    return vals if vals else val.split()
+
+
+def _forti_section(text: str, path: str) -> list:
+    """Entries of FortiOS 'config <path>' … 'end' sections as (edit_name, {set key: raw value}).
+    Nested 'config … end' blocks inside an edit are skipped; multiple sections
+    with the same path (multi-VDOM) are merged. Returns [] if absent."""
+    entries = []
+    in_section = False
+    depth = 0
+    name = None
+    settings = None
+    target = "config " + path
+    for raw in text.splitlines():
+        s = raw.strip()
+        if not in_section:
+            if s == target:
+                in_section = True
+                depth = 0
+                name, settings = None, None
+            continue
+        if s.startswith("config "):
+            depth += 1
+        elif s == "end":
+            if depth == 0:
+                in_section = False
+            else:
+                depth -= 1
+        elif depth == 0:
+            if s.startswith("edit "):
+                name = _forti_unquote(s[len("edit "):])
+                settings = {}
+            elif s == "next":
+                if name is not None:
+                    entries.append((name, settings))
+                name, settings = None, None
+            elif s.startswith("set ") and settings is not None:
+                kv = s[len("set "):].split(None, 1)
+                if kv:
+                    settings[kv[0]] = kv[1].strip() if len(kv) > 1 else ""
+    return entries
+
+
+def _forti_hostname(text: str) -> str:
+    m = re.search(r"^\s*set hostname\s+(.+?)\s*$", text, re.MULTILINE)
+    return _forti_unquote(m.group(1)) if m else ""
+
+
+def _ip_with_prefix(ip_field: str) -> str:
+    """'203.0.113.2 255.255.255.252' → '203.0.113.2/30'."""
+    parts = ip_field.split()
+    if len(parts) == 2:
+        try:
+            prefix = sum(bin(int(o)).count("1") for o in parts[1].split("."))
+            return f"{parts[0]}/{prefix}"
+        except ValueError:
+            pass
+    return parts[0] if parts else ""
+
+
+def _forti_pick_mgmt(candidates: list) -> str:
+    """candidates: (name, allowaccess, ip). Priority: 'mgmt' iface →
+    allowaccess з ssh/https → перший IP."""
+    for n, _a, ip in candidates:
+        if n.lower() in ("mgmt", "mgmt1", "management"):
+            return ip
+    for _n, a, ip in candidates:
+        if "ssh" in a or "https" in a:
+            return ip
+    return candidates[0][2] if candidates else ""
+
+
+def _forti_fill_switchport(iface: dict, ss: dict):
+    """Map FortiSwitch 'config switch interface' settings onto access/trunk fields."""
+    native  = ss.get("native-vlan", "")
+    allowed = ss.get("allowed-vlans", "").strip()
+    allowed = re.sub(r"[\s,]+", ",", allowed) if allowed else ""
+    if ss.get("allowed-vlans-all", "") in ("enable", "enabled"):
+        allowed = "all"
+    if allowed:
+        iface["mode"] = "trunk"
+        iface["trunk_vlans"] = allowed
+        iface["native_vlan"] = native
+    elif native:
+        iface["mode"] = "access"
+        iface["access_vlan"] = native
+
+
+def _forti_parse_gate(result: dict, sys_iface: list):
+    """FortiGate: усі інтерфейси в 'config system interface'."""
+    member_of = {}
+    for name, s in sys_iface:
+        if s.get("type", "") in ("aggregate", "redundant", "switch",
+                                 "hard-switch", "software-switch"):
+            for mem in _forti_values(s.get("member", "")):
+                member_of[mem] = name
+
+    mgmt_candidates = []
+    for name, s in sys_iface:
+        iface  = _blank_iface(name)
+        typ    = s.get("type", "")
+        vlanid = s.get("vlanid", "")
+        ip     = s.get("ip", "")
+        if ip and not ip.startswith("0.0.0.0"):
+            iface["ip_address"] = ip
+        alias = _forti_unquote(s.get("alias", ""))
+        descr = _forti_unquote(s.get("description", ""))
+        iface["description"] = " / ".join(p for p in (alias, descr) if p)
+        iface["shutdown"] = s.get("status", "").strip() == "down"
+
+        notes = []
+        if vlanid and not typ:
+            typ = "vlan"
+        if typ == "vlan":
+            iface["iface_class"] = "logical"
+            iface["row_kind"]    = "vlan"
+            iface["access_vlan"] = vlanid
+            parent = _forti_unquote(s.get("interface", ""))
+            notes.append(f"VLAN {vlanid}" + (f" @ {parent}" if parent else ""))
+        elif typ in ("aggregate", "redundant"):
+            iface["iface_class"] = "logical"
+            iface["row_kind"]    = "po"
+            iface["mode"]        = "lacp" if typ == "aggregate" else "redundant"
+            members = _forti_values(s.get("member", ""))
+            if members:
+                notes.append("members: " + ", ".join(members))
+        elif typ == "loopback":
+            iface["iface_class"] = "logical"
+            iface["row_kind"]    = "lo"
+        elif typ == "tunnel":
+            iface["iface_class"] = "logical"
+            notes.append("tunnel")
+        elif typ in ("switch", "hard-switch", "software-switch"):
+            iface["iface_class"] = "logical"
+            iface["mode"]        = "switch"
+            members = _forti_values(s.get("member", ""))
+            if members:
+                notes.append("members: " + ", ".join(members))
+
+        if not iface["mode"]:
+            if s.get("mode", "") == "dhcp":
+                iface["mode"] = "dhcp"
+            elif iface["ip_address"]:
+                iface["mode"] = "routed"
+
+        # Physical table has no IP column — surface the address in notes
+        if iface["iface_class"] == "physical" and iface["ip_address"]:
+            notes.insert(0, f"IP: {_ip_with_prefix(iface['ip_address'])}")
+
+        if name in member_of:
+            notes.append(f"{member_of[name]} member")
+        role = s.get("role", "")
+        if role and role != "undefined":
+            notes.append(f"role: {role}")
+        if s.get("dedicated-to", "") == "management":
+            notes.append("dedicated mgmt")
+        allow = s.get("allowaccess", "")
+        if allow:
+            notes.append(allow)
+        if iface["shutdown"]:
+            notes.append("shutdown")
+        iface["notes"] = "\n".join(notes)
+
+        result["interfaces"].append(iface)
+        if iface["ip_address"]:
+            mgmt_candidates.append((name, allow, iface["ip_address"].split()[0]))
+
+    result["mgmt_ip"] = _forti_pick_mgmt(mgmt_candidates)
+
+
+def _forti_parse_switch(result: dict, sw_phys: list, sw_iface: list,
+                        sw_trunk: list, sw_vlan: list, sys_iface: list):
+    """Standalone FortiSwitch: порти з 'config switch …', mgmt — з 'config system interface'."""
+    phys = dict(sw_phys)
+    swif = dict(sw_iface)
+
+    member_of   = {}
+    trunk_names = set()
+    for tname, ts in sw_trunk:
+        trunk_names.add(tname)
+        for mem in _forti_values(ts.get("members", "")):
+            member_of[mem] = tname
+
+    sys_names = {n for n, _s in sys_iface}
+
+    # Physical ports: order from physical-port section, then any extra
+    # switch-interface entries that are not trunks / system interfaces
+    port_order = [n for n, _s in sw_phys]
+    for n, _s in sw_iface:
+        if n not in phys and n not in trunk_names and n not in sys_names:
+            port_order.append(n)
+
+    for name in port_order:
+        ps = phys.get(name, {})
+        ss = swif.get(name, {})
+        iface = _blank_iface(name)
+        iface["description"] = _forti_unquote(
+            ps.get("description", "") or ss.get("description", ""))
+        iface["shutdown"] = ps.get("status", "").strip() == "down"
+        _forti_fill_switchport(iface, ss)
+
+        notes = []
+        if name in member_of:
+            notes.append(f"{member_of[name]} member")
+            if not iface["mode"]:
+                iface["mode"] = "lag"
+        sec = ss.get("security-mode", "")
+        if sec and sec != "none":
+            iface["port_security"] = True
+            notes.append(sec)
+        if ss.get("stp-state", "") == "disabled":
+            notes.append("STP off")
+        if iface["shutdown"]:
+            notes.append("shutdown")
+        iface["notes"] = "\n".join(notes)
+        result["interfaces"].append(iface)
+
+    # Link aggregation trunks → logical (Po analogue)
+    for tname, ts in sw_trunk:
+        iface = _blank_iface(tname)
+        iface["iface_class"] = "logical"
+        iface["row_kind"]    = "po"
+        iface["description"] = _forti_unquote(ts.get("description", ""))
+        _forti_fill_switchport(iface, swif.get(tname, {}))
+
+        notes = []
+        members = _forti_values(ts.get("members", ""))
+        if members:
+            notes.append("members: " + ", ".join(members))
+        if iface["trunk_vlans"]:
+            notes.append(f"VLANs: {iface['trunk_vlans']}")
+            if iface["native_vlan"]:
+                notes.append(f"native: {iface['native_vlan']}")
+        elif iface["access_vlan"]:
+            notes.append(f"VLAN: {iface['access_vlan']}")
+        iface["mode"] = ts.get("mode", "") or "static"
+        iface["notes"] = "\n".join(notes)
+        result["interfaces"].append(iface)
+
+    # System interfaces (mgmt / internal) → logical, carry the IP
+    mgmt_candidates = []
+    for name, s in sys_iface:
+        iface = _blank_iface(name)
+        iface["iface_class"] = "logical"
+        if s.get("type", "") == "vlan" or s.get("vlanid", ""):
+            iface["row_kind"] = "vlan"
+        ip = s.get("ip", "")
+        if ip and not ip.startswith("0.0.0.0"):
+            iface["ip_address"] = ip
+        iface["description"] = _forti_unquote(s.get("description", ""))
+        iface["shutdown"] = s.get("status", "").strip() == "down"
+        if iface["ip_address"]:
+            iface["mode"] = "routed"
+
+        notes = []
+        vlanid = s.get("vlanid", "")
+        if vlanid:
+            notes.append(f"VLAN {vlanid}")
+        allow = s.get("allowaccess", "")
+        if allow:
+            notes.append(allow)
+        if iface["shutdown"]:
+            notes.append("shutdown")
+        iface["notes"] = "\n".join(notes)
+        result["interfaces"].append(iface)
+        if iface["ip_address"]:
+            mgmt_candidates.append((name, allow, iface["ip_address"].split()[0]))
+
+    result["mgmt_ip"] = _forti_pick_mgmt(mgmt_candidates)
+
+    # VLAN definitions from 'config switch vlan'
+    for vid, vs in sw_vlan:
+        if re.match(r"^\d+$", vid):
+            result["vlans"].append(
+                {"id": vid, "name": _forti_unquote(vs.get("description", ""))})
+
+
+def parse_fortinet(text: str) -> dict:
+    """Parse FortiGate / FortiSwitch 'show full-configuration' into the same
+    schema as parse_showrun()."""
+    result = {"hostname": _forti_hostname(text), "mgmt_ip": "",
+              "ssh_source_iface": "", "interfaces": [], "vlans": []}
+
+    sys_iface = _forti_section(text, "system interface")
+    sw_phys   = _forti_section(text, "switch physical-port")
+    sw_iface  = _forti_section(text, "switch interface")
+    sw_trunk  = _forti_section(text, "switch trunk")
+    sw_vlan   = _forti_section(text, "switch vlan")
+
+    if sw_iface or sw_phys:
+        _forti_parse_switch(result, sw_phys, sw_iface, sw_trunk, sw_vlan, sys_iface)
+    else:
+        _forti_parse_gate(result, sys_iface)
+
+    used_ids, trunk_all = _collect_used_vlans(result["interfaces"])
+    for vlan in result["vlans"]:
+        vlan["used"] = trunk_all or vlan["id"] in used_ids
+    result["vlans"].sort(key=lambda v: int(v["id"]))
+
+    return result
+
+
+def parse_config(text: str) -> dict:
+    """Vendor-aware dispatcher: Cisco IOS або FortiOS/FortiSwitchOS."""
+    if detect_vendor(text) == "fortinet":
+        return parse_fortinet(text)
+    return parse_showrun(text)
+
+
 def parse_version_inventory(text: str) -> dict:
     """Extract model and serial from show inventory / show version blocks."""
     model = ""
@@ -331,6 +679,18 @@ def parse_version_inventory(text: str) -> dict:
         if m:
             serial = m.group(1)
 
+    # Fortinet: model from the '#config-version=FGT60E-6.4.5-…' header
+    if not model:
+        m = re.search(r"^#config-version=(\w+)-", text, re.MULTILINE)
+        if m:
+            model = m.group(1)
+
+    # Fortinet: serial from a pasted 'get system status' block
+    if not serial:
+        m = re.search(r"^Serial-Number:\s*(\S+)", text, re.MULTILINE)
+        if m:
+            serial = m.group(1)
+
     return {"model": model, "serial": serial}
 
 
@@ -343,9 +703,23 @@ def classify_interfaces(interfaces: list):
 def format_load_status(parsed: dict) -> str:
     """Build status bar string shown after a config file is loaded."""
     physical, logical = classify_interfaces(parsed["interfaces"])
-    po    = sum(1 for i in logical if i["name"].lower().startswith("port-channel"))
-    vlans = sum(1 for i in logical if i["name"].startswith("Vlan"))
-    loops = sum(1 for i in logical if i["name"].startswith("Loopback"))
+
+    def _kind(i):
+        rk = i.get("row_kind", "")
+        if rk:
+            return rk
+        n = i.get("name", "")
+        if n.lower().startswith("port-channel"):
+            return "po"
+        if n.startswith("Vlan"):
+            return "vlan"
+        if n.startswith("Loopback"):
+            return "lo"
+        return ""
+
+    po    = sum(1 for i in logical if _kind(i) == "po")
+    vlans = sum(1 for i in logical if _kind(i) == "vlan")
+    loops = sum(1 for i in logical if _kind(i) == "lo")
     parts = []
     if parsed.get("mgmt_ip"):
         parts.append(f"MGMT: {parsed['mgmt_ip']}")
@@ -625,9 +999,10 @@ def _add_interface_table(doc, interfaces: list, logical: bool = False):
     for ri, iface in enumerate(interfaces):
         short = short_iface(iface["name"])
 
-        if short.startswith("Po"):
+        kind = iface.get("row_kind", "")
+        if kind == "po" or short.startswith("Po"):
             bg = C_PO_ROW
-        elif short.startswith("Vlan") or short.startswith("Lo"):
+        elif kind in ("vlan", "lo") or short.startswith("Vlan") or short.startswith("Lo"):
             bg = C_VLAN_ROW
         elif ri % 2 == 0:
             bg = C_WHITE
@@ -813,7 +1188,7 @@ _G_GREENBG = "#0f2a1a"
 class App(_BASE):
     def __init__(self):
         super().__init__()
-        self.title("network-documentr — Cisco DOCX Generator")
+        self.title("network-documentr — Cisco / Fortinet DOCX Generator")
         self.resizable(False, True)
         self.geometry("560x155")
         self.configure(bg=_G_BG)
@@ -1021,8 +1396,9 @@ class App(_BASE):
 
     def _browse(self):
         paths = filedialog.askopenfilenames(
-            title="Оберіть файл(и) show running-config",
-            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+            title="Оберіть файл(и) show running-config / show full-configuration",
+            filetypes=[("Config files", "*.txt *.conf *.cfg *.log"),
+                       ("All files", "*.*")],
         )
         if not paths:
             return
@@ -1031,7 +1407,7 @@ class App(_BASE):
     def _load_files(self, paths: list):
         try:
             texts = [read_file_safe(p) for p in paths]
-            parsed_list = [parse_showrun(t) for t in texts]
+            parsed_list = [parse_config(t) for t in texts]
             detected_list = [parse_version_inventory(t) for t in texts]
         except Exception:
             self._paths = []
@@ -1065,7 +1441,8 @@ class App(_BASE):
     def _generate(self):
         if not self._config_entries:
             messagebox.showerror("Помилка",
-                                 "Оберіть файл(и) show running-config.")
+                                 "Оберіть файл(и) конфігурації "
+                                 "(show running-config / show full-configuration).")
             return
 
         if len(self._config_entries) == 1:
