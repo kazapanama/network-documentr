@@ -1,0 +1,145 @@
+SW-FLOOR2-01#show running-config
+Building configuration...
+
+Current configuration : 9214 bytes
+!
+version 17.9
+hostname SW-FLOOR2-01
+!
+vlan 10
+ name USERS
+!
+vlan 20
+ name VOICE
+!
+vlan 30
+ name PRINTERS
+!
+vlan 40
+ name CAMERAS
+!
+vlan 99
+ name MGMT
+!
+interface GigabitEthernet1/0/1
+ description Room 201
+ switchport access vlan 10
+ switchport mode access
+ switchport voice vlan 20
+ spanning-tree portfast
+!
+interface GigabitEthernet1/0/2
+ description Room 202
+ switchport access vlan 10
+ switchport mode access
+ switchport voice vlan 20
+ spanning-tree portfast
+!
+interface GigabitEthernet1/0/3
+ description Room 203
+ switchport access vlan 10
+ switchport mode access
+ switchport voice vlan 20
+ spanning-tree portfast
+!
+interface GigabitEthernet1/0/4
+ description Room 204
+ switchport access vlan 10
+ switchport mode access
+ switchport voice vlan 20
+ spanning-tree portfast
+!
+interface GigabitEthernet1/0/5
+ description Room 205
+ switchport access vlan 10
+ switchport mode access
+ switchport voice vlan 20
+ spanning-tree portfast
+!
+interface GigabitEthernet1/0/6
+ description Room 206
+ switchport access vlan 10
+ switchport mode access
+ switchport voice vlan 20
+ spanning-tree portfast
+!
+interface GigabitEthernet1/0/7
+ description Reception
+ switchport access vlan 10
+ switchport mode access
+ switchport voice vlan 20
+ switchport port-security maximum 2
+ switchport port-security
+ spanning-tree portfast
+ spanning-tree bpduguard enable
+!
+interface GigabitEthernet1/0/8
+ description Meeting room
+ switchport access vlan 10
+ switchport mode access
+ switchport voice vlan 20
+ switchport port-security maximum 2
+ switchport port-security
+ spanning-tree portfast
+ spanning-tree bpduguard enable
+!
+interface GigabitEthernet1/0/9
+ description Printer floor 2
+ switchport access vlan 30
+ switchport mode access
+ spanning-tree portfast
+!
+interface GigabitEthernet1/0/10
+ description Camera corridor
+ switchport access vlan 40
+ switchport mode access
+ spanning-tree portfast
+!
+interface GigabitEthernet1/0/11
+ description Spare
+ switchport access vlan 10
+ switchport mode access
+ shutdown
+!
+interface GigabitEthernet1/0/12
+ description Spare
+ switchport access vlan 10
+ switchport mode access
+ shutdown
+!
+interface GigabitEthernet1/0/23
+ description Uplink to CORE-01
+ switchport trunk native vlan 999
+ switchport trunk allowed vlan 10,20,30,40,99
+ switchport mode trunk
+ channel-group 1 mode active
+!
+interface GigabitEthernet1/0/24
+ description Uplink to CORE-01
+ switchport trunk native vlan 999
+ switchport trunk allowed vlan 10,20,30,40,99
+ switchport mode trunk
+ channel-group 1 mode active
+!
+interface Port-channel1
+ description Uplink to CORE-01
+ switchport trunk native vlan 999
+ switchport trunk allowed vlan 10,20,30,40,99
+ switchport mode trunk
+!
+interface Vlan1
+ no ip address
+ shutdown
+!
+interface Vlan99
+ description Management
+ ip address 10.10.99.12 255.255.255.0
+!
+ip default-gateway 10.10.99.1
+ip ssh source-interface Vlan99
+!
+end
+
+SW-FLOOR2-01#show inventory
+NAME: "c92xx Stack", DESCR: "c92xx Stack"
+PID: C9200L-24P-4G     , VID: V01  , SN: FOC0000X0AB
