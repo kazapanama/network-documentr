@@ -20,6 +20,8 @@ from docx.oxml import OxmlElement
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+from audit import run_audit, report_text, summary_text, short_summary, SEV_LABEL
+
 # ── Colours ───────────────────────────────────────────────────────────────────
 C_DARK_BLUE   = "1A2B4A"
 C_MID_BLUE    = "2C4A7C"
@@ -1152,6 +1154,119 @@ def build_docx(parsed: dict, user_inputs: dict, output_path: str):
     doc.save(output_path)
 
 
+# ── Audit report ──────────────────────────────────────────────────────────────
+C_SEV_BG  = {"high": "FDE2E2", "medium": "FEF3C7", "low": "F1F5F9"}
+RGB_SEV   = {"high": RGBColor(0xB9, 0x1C, 0x1C), "medium": RGBColor(0xB4, 0x53, 0x09),
+             "low": RGBColor(0x47, 0x55, 0x69)}
+RGB_MUTED = RGBColor(0x64, 0x74, 0x8B)
+
+
+def _write_runs(cell, runs: list, align=WD_ALIGN_PARAGRAPH.LEFT):
+    """runs: [(text, bold, size, color, font)]; '\\n' → новий абзац у клітинці."""
+    def _fmt(p):
+        p.paragraph_format.space_before = Pt(0)
+        p.paragraph_format.space_after  = Pt(0)
+        p.alignment = align
+
+    para = cell.paragraphs[0]
+    para.clear()
+    _fmt(para)
+    for text, bold, size, color, font in runs:
+        for i, part in enumerate((text or "").split("\n")):
+            if i > 0:
+                para = cell.add_paragraph()
+                _fmt(para)
+            if not part:
+                continue
+            run = para.add_run(part)
+            run.bold = bold
+            run.font.size = Pt(size)
+            if color:
+                run.font.color.rgb = color
+            _set_run_font(run, font)
+
+
+def build_audit_docx(report, parsed: dict, user_inputs: dict, output_path: str):
+    """DOCX зі звітом аудиту: шапка, зведення, таблиця «рівень · що · де · як виправити»."""
+    doc = Document()
+    doc.styles["Normal"].font.name = "Calibri"
+    section = doc.sections[0]
+    section.page_width, section.page_height = Mm(210), Mm(297)
+    for side in ("left_margin", "right_margin", "top_margin", "bottom_margin"):
+        setattr(section, side, Mm(14))
+    if doc.paragraphs:
+        p = doc.paragraphs[0]._element
+        p.getparent().remove(p)
+
+    hostname = parsed.get("hostname") or "Unknown"
+    _add_header_block(doc, f"{hostname} — аудит конфігурації")
+    _add_info_block(doc, user_inputs.get("model") or report.vendor, user_inputs.get("serial") or "—",
+                    parsed.get("mgmt_ip") or "—", date.today().strftime("%d.%m.%Y"))
+
+    para = doc.add_paragraph()
+    para.paragraph_format.space_after = Pt(4)
+    r = para.add_run(f"{report.vendor}: {summary_text(report)}")
+    r.bold = True
+    r.font.size = Pt(11)
+    r.font.color.rgb = RGB_DARK_TEXT
+    _set_run_font(r)
+    for note in report.skipped:
+        np_ = doc.add_paragraph()
+        np_.paragraph_format.space_after = Pt(4)
+        nr = np_.add_run(note)
+        nr.italic = True
+        nr.font.size = Pt(9)
+        nr.font.color.rgb = RGB_MUTED
+        _set_run_font(nr)
+
+    if not report.findings:
+        p2 = doc.add_paragraph()
+        r2 = p2.add_run("Недолаштованого не знайдено.")
+        r2.font.size = Pt(11)
+        _set_run_font(r2)
+        doc.save(output_path)
+        return
+
+    _add_section_header(doc, "ЩО НЕДОЛАШТОВАНО")
+    COL_W_MM = [22, 70, 34, 56]
+    COL_HDR  = ["РІВЕНЬ", "ЩО НЕДОЛАШТОВАНО", "ДЕ", "ЯК ВИПРАВИТИ"]
+    tbl = doc.add_table(rows=1, cols=4)
+    tbl.alignment = WD_TABLE_ALIGNMENT.LEFT
+    set_table_fixed_layout(tbl)
+    set_table_width(tbl, USABLE_MM)
+    set_table_borders(tbl, color_hex=C_BORDER, sz="4")
+    set_cell_margins_table(tbl, top=40, left=70, bottom=40, right=50)
+
+    hdr = tbl.rows[0]
+    set_repeat_header_row(hdr)
+    set_row_min_height(hdr, 400)
+    for ci, (h, w) in enumerate(zip(COL_HDR, COL_W_MM)):
+        c = hdr.cells[ci]
+        c.width = Mm(w)
+        set_cell_bg(c, C_ACCENT_BLUE)
+        _write_cell(c, h, bold=True, color=RGB_WHITE, font_size=10,
+                    align=WD_ALIGN_PARAGRAPH.CENTER if ci == 0 else WD_ALIGN_PARAGRAPH.LEFT)
+
+    for ri, f in enumerate(report.findings):
+        row = tbl.add_row()
+        bg = C_WHITE if ri % 2 == 0 else C_ROW_ALT
+        cells = row.cells
+        for ci, w in enumerate(COL_W_MM):
+            cells[ci].width = Mm(w)
+            cells[ci].vertical_alignment = WD_ALIGN_VERTICAL.TOP
+            set_cell_bg(cells[ci], bg)
+        set_cell_bg(cells[0], C_SEV_BG[f.sev])
+        cells[0].vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+        _write_cell(cells[0], SEV_LABEL[f.sev], bold=True, color=RGB_SEV[f.sev],
+                    font_size=9, align=WD_ALIGN_PARAGRAPH.CENTER)
+        _write_runs(cells[1], [(f.title, True, 10, RGB_DARK_TEXT, "Calibri"),
+                               ("\n" + f.why, False, 9, RGB_MUTED, "Calibri")])
+        _write_cell(cells[2], "\n".join(f.where) or "—", color=RGB_DARK_TEXT, font_size=9)
+        _write_runs(cells[3], [(f.fix or "—", False, 8, RGB_DARK_TEXT, "Consolas")])
+
+    doc.save(output_path)
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 #  GUI
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1289,6 +1404,19 @@ class App(_BASE):
             bordercolor=[("active", _G_GREENH)],
             lightcolor=[("active", _G_GREENH)])
 
+        s.configure("TNotebook", background=_G_BG, borderwidth=0, tabmargins=(0, 0, 0, 0))
+        s.configure("TNotebook.Tab",
+            background=_G_BTN, foreground=_G_LBL, padding=(12, 5),
+            borderwidth=0, font=("Arial", 10, "bold"))
+        s.map("TNotebook.Tab",
+            background=[("selected", _G_IN)],
+            foreground=[("selected", _G_ACCENT)])
+        s.configure("Vertical.TScrollbar",
+            background=_G_BTN, troughcolor=_G_IN, bordercolor=_G_BG,
+            arrowcolor=_G_LBL, lightcolor=_G_BTN, darkcolor=_G_BTN)
+        s.configure("Summary.TLabel",
+            background=_G_BG, foreground=_G_FG, font=("Arial", 11, "bold"))
+
         s.configure("Blue.TButton",
             background="#0078d4", foreground="#ffffff",
             bordercolor="#0078d4", lightcolor="#0078d4", darkcolor="#0078d4",
@@ -1322,11 +1450,17 @@ class App(_BASE):
 
         ttk.Label(f, textvariable=self._status, style="Status.TLabel").grid(
             row=1000, column=0, columnspan=2, sticky="w", padx=10)
-        self._btn_generate = ttk.Button(f, text="Створити DOCX",
+        self._actions = ttk.Frame(f)
+        self._btn_audit = ttk.Button(self._actions, text="Аудит",
+                                     style="TButton", command=self._audit,
+                                     cursor="hand2")
+        self._btn_audit.pack(side="left", padx=(0, 8))
+        self._btn_generate = ttk.Button(self._actions, text="Створити DOCX",
                                         style="Blue.TButton", command=self._generate,
                                         cursor="hand2")
-        self._btn_generate.grid(row=1000, column=2, padx=10, pady=2)
-        self._btn_generate.grid_remove()
+        self._btn_generate.pack(side="left")
+        self._actions.grid(row=1000, column=2, padx=10, pady=2, sticky="e")
+        self._actions.grid_remove()
 
     def _rebuild_entries_ui(self):
         for w in self._dynamic_widgets:
@@ -1355,6 +1489,8 @@ class App(_BASE):
             row += 1
 
             status_text = format_load_status(entry["parsed"])
+            if entry.get("audit"):
+                status_text += "  ·  " + short_summary(entry["audit"])
             w = ttk.Label(f, text=status_text, style="Status.TLabel")
             w.grid(row=row, column=0, columnspan=3, sticky="w", padx=10, pady=(0, 6))
             self._dynamic_widgets.append(w)
@@ -1385,7 +1521,7 @@ class App(_BASE):
         n = len(self._config_entries)
         if n == 0:
             self._btn_load.configure(text="Завантажити конфігурації", style="Blue.TButton")
-            self._btn_generate.grid_remove()
+            self._actions.grid_remove()
             self._status.set("Оберіть файл конфігурації та заповніть поля.")
             self._rebuild_entries_ui()
             self.update_idletasks()
@@ -1409,10 +1545,13 @@ class App(_BASE):
             texts = [read_file_safe(p) for p in paths]
             parsed_list = [parse_config(t) for t in texts]
             detected_list = [parse_version_inventory(t) for t in texts]
+            audit_list = [run_audit(t, p) for t, p in zip(texts, parsed_list)]
         except Exception:
             self._paths = []
             self._config_entries = []
             self._btn_load.configure(text="Завантажити конфігурації", style="Blue.TButton")
+            self._actions.grid_remove()
+            self._rebuild_entries_ui()
             self._status.set("Помилка читання файлу.")
             return
 
@@ -1423,12 +1562,13 @@ class App(_BASE):
                 "parsed": parsed,
                 "model":  tk.StringVar(value=det["model"]),
                 "serial": tk.StringVar(value=det["serial"]),
+                "audit":  rep,
             }
-            for p, parsed, det in zip(paths, parsed_list, detected_list)
+            for p, parsed, det, rep in zip(paths, parsed_list, detected_list, audit_list)
         ]
         n = len(paths)
         self._btn_load.configure(text=f"Завантажено конфігурацій: {n}", style="Loaded.TButton")
-        self._btn_generate.grid(row=1000, column=2, padx=10, pady=2)
+        self._actions.grid(row=1000, column=2, padx=10, pady=2, sticky="e")
         self._status.set("")
         self._rebuild_entries_ui()
 
@@ -1437,6 +1577,11 @@ class App(_BASE):
         paths = [t.strip('{}') for t in tokens if os.path.isfile(t.strip('{}'))]
         if paths:
             self._load_files(paths)
+
+    def _audit(self):
+        if not self._config_entries:
+            return
+        AuditWindow(self, self._config_entries)
 
     def _generate(self):
         if not self._config_entries:
@@ -1513,6 +1658,158 @@ class App(_BASE):
                     "Готово",
                     f"Збережено {len(saved)} документів:\n" + "\n".join(saved),
                 )
+
+
+_SEV_TAG = {  # tag: (foreground, background)
+    "high":   ("#ff8a8a", "#4a1c1c"),
+    "medium": ("#fbbf24", "#3d3111"),
+    "low":    ("#a8b4c4", "#2a313b"),
+}
+
+
+class AuditWindow(tk.Toplevel):
+    """Вікно аудиту: вкладка на кожен завантажений конфіг, знахідки за рівнем."""
+
+    def __init__(self, app, entries: list):
+        super().__init__(app)
+        self.title("Аудит — що недолаштовано")
+        self.configure(bg=_G_BG)
+        self.geometry("820x680")
+        self.minsize(560, 360)
+        try:
+            self.iconbitmap(_asset("app_icon.ico"))
+        except Exception:
+            pass
+        self._entries = entries
+        self._texts = []
+
+        outer = ttk.Frame(self, padding="12 10 12 10")
+        outer.pack(fill="both", expand=True)
+
+        if len(entries) > 1:
+            self._nb = ttk.Notebook(outer)
+            self._nb.pack(fill="both", expand=True)
+            for e in entries:
+                tab = ttk.Frame(self._nb, padding="0 8 0 0")
+                self._nb.add(tab, text=self._tab_title(e))
+                self._build_report(tab, e)
+        else:
+            self._nb = None
+            self._build_report(outer, entries[0])
+
+        bar = ttk.Frame(outer)
+        bar.pack(fill="x", pady=(10, 0))
+        ttk.Button(bar, text="Копіювати", command=self._copy, cursor="hand2").pack(side="left")
+        if len(entries) > 1:
+            ttk.Button(bar, text="Зберегти всі…", command=self._save_all,
+                       cursor="hand2").pack(side="right", padx=(8, 0))
+        ttk.Button(bar, text="Зберегти звіт…", style="Blue.TButton", command=self._save,
+                   cursor="hand2").pack(side="right")
+        self.after(50, lambda: App._dark_titlebar(self))
+
+    @staticmethod
+    def _hostname(e) -> str:
+        return e["parsed"].get("hostname") or Path(e["path"]).stem
+
+    def _tab_title(self, e) -> str:
+        n = len(e["audit"].findings)
+        return f"{self._hostname(e)}  ({n})" if n else f"{self._hostname(e)}  ✓"
+
+    def _build_report(self, parent, e):
+        rep = e["audit"]
+        ttk.Label(parent, text=f"{self._hostname(e)}  ·  {rep.vendor}  ·  {summary_text(rep)}",
+                  style="Summary.TLabel").pack(anchor="w", pady=(0, 8))
+
+        wrap = tk.Frame(parent, bg=_G_BORDER)
+        wrap.pack(fill="both", expand=True)
+        txt = tk.Text(wrap, wrap="word", bg=_G_IN, fg=_G_FG, relief="flat", borderwidth=0,
+                      padx=14, pady=10, font=("Segoe UI", 10), insertbackground=_G_FG,
+                      selectbackground="#264f78", cursor="arrow", highlightthickness=0)
+        sb = ttk.Scrollbar(wrap, orient="vertical", command=txt.yview)
+        txt.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        txt.pack(side="left", fill="both", expand=True, padx=1, pady=1)
+
+        for sev, (fg, bg) in _SEV_TAG.items():
+            txt.tag_configure("sev_" + sev, foreground=fg, background=bg, font=("Segoe UI", 9, "bold"))
+        txt.tag_configure("title", font=("Segoe UI", 11, "bold"), foreground="#f2f2f2")
+        txt.tag_configure("why", foreground="#c4c4c4", lmargin1=18, lmargin2=18)
+        txt.tag_configure("lbl", foreground="#7d8796", font=("Segoe UI", 9, "bold"), lmargin1=18)
+        txt.tag_configure("where", foreground=_G_FG, font=("Consolas", 10))
+        txt.tag_configure("code", font=("Consolas", 10), foreground="#9fe8ff", background="#151a20",
+                          lmargin1=30, lmargin2=30, spacing1=0, spacing3=0)
+        txt.tag_configure("note", foreground="#fbbf24", font=("Segoe UI", 9, "italic"), spacing3=8)
+        txt.tag_configure("ok", foreground=_G_GREEN, font=("Segoe UI", 12, "bold"))
+        txt.tag_configure("gap", font=("Segoe UI", 5))
+
+        for note in rep.skipped:
+            txt.insert("end", "! " + note + "\n", "note")
+        if not rep.findings:
+            txt.insert("end", "✓ Недолаштованого не знайдено.\n", "ok")
+        for f in rep.findings:
+            txt.insert("end", f" {SEV_LABEL[f.sev]} ", "sev_" + f.sev)
+            txt.insert("end", "  " + f.title + "\n", "title")
+            txt.insert("end", f.why + "\n", "why")
+            if f.where:
+                txt.insert("end", "Де: ", "lbl")
+                txt.insert("end", "; ".join(f.where) + "\n", "where")
+            if f.fix:
+                txt.insert("end", "Як виправити:\n", "lbl")
+                txt.insert("end", f.fix + "\n", "code")
+            txt.insert("end", "\n", "gap")
+        txt.configure(state="disabled")
+        self._texts.append(txt)
+
+    def _current(self):
+        if self._nb is None:
+            return self._entries[0]
+        return self._entries[self._nb.index(self._nb.select())]
+
+    def _copy(self):
+        e = self._current()
+        self.clipboard_clear()
+        self.clipboard_append(report_text(e["audit"], self._hostname(e)))
+
+    @staticmethod
+    def _write(e, path: str):
+        if path.lower().endswith(".txt"):
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(report_text(e["audit"], AuditWindow._hostname(e)))
+        else:
+            build_audit_docx(e["audit"], e["parsed"],
+                             {"model": e["model"].get().strip(), "serial": e["serial"].get().strip()}, path)
+
+    def _save(self):
+        e = self._current()
+        path = filedialog.asksaveasfilename(
+            parent=self, title="Зберегти звіт аудиту як…",
+            initialdir=str(Path(e["path"]).parent),
+            initialfile=f"{self._hostname(e)}_audit.docx", defaultextension=".docx",
+            filetypes=[("Word document", "*.docx"), ("Текст", "*.txt")])
+        if not path:
+            return
+        try:
+            self._write(e, path)
+            messagebox.showinfo("Готово", f"Звіт збережено:\n{path}", parent=self)
+        except Exception as exc:
+            messagebox.showerror("Помилка", str(exc), parent=self)
+
+    def _save_all(self):
+        out_dir = filedialog.askdirectory(parent=self, title="Куди зберегти звіти аудиту")
+        if not out_dir:
+            return
+        saved, errors = [], []
+        for e in self._entries:
+            path = os.path.join(out_dir, f"{self._hostname(e)}_audit.docx")
+            try:
+                self._write(e, path)
+                saved.append(Path(path).name)
+            except Exception as exc:
+                errors.append(f"{Path(e['path']).name}: {exc}")
+        if errors:
+            messagebox.showerror("Помилки", "\n".join(errors), parent=self)
+        if saved:
+            messagebox.showinfo("Готово", f"Збережено {len(saved)}:\n" + "\n".join(saved), parent=self)
 
 
 if __name__ == "__main__":
